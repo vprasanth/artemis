@@ -38,6 +38,7 @@ go run main.go
 | `t` | Toggle between Gantt chart and event timeline |
 | `c` | Cycle color theme (Default, Retro, Hi-Con, Critical) |
 | `s` | Toggle star animation in trajectory view |
+| `r` | Force-refresh all data sources |
 | `j` / `Tab` | Select next mission log entry |
 | `k` / `Shift+Tab` | Select previous mission log entry |
 | `Enter` | Open selected log entry in browser |
@@ -47,13 +48,26 @@ go run main.go
 The dashboard shows panels based on available terminal height, in priority order:
 
 1. **Mission Clock** -- MET, UTC time, mission day, next event countdown
-2. **Spacecraft State** -- distance from Earth/Moon, speed, position vector, RTLT
+2. **Spacecraft State** -- distance from Earth/Moon, speed, position vector, RTLT, AOS/LOS signal status
 3. **Space Weather** -- NOAA R/S/G scales, Kp index, solar wind, Bz, proton flux
 4. **Deep Space Network** -- active dishes, signal bands, data rates, range
 5. **Mission Timeline** -- Gantt chart or scrolling event list with 25 mission events
 6. **Mission Log** -- latest NASA blog posts with selection and browser opening
-7. **Trajectory** -- ASCII art Earth-to-Moon trajectory with twinkling stars and pulsing spacecraft
+7. **Trajectory** -- ASCII art Earth-to-Moon trajectory with twinkling stars and pulsing spacecraft (turns red during LOS)
 8. **Crew** -- the four Artemis II astronauts and their roles
+
+## Data Refresh Rates
+
+Polling intervals are tuned for long-running sessions to minimize battery and network usage:
+
+| Source | Interval |
+|--------|----------|
+| Deep Space Network | 30 seconds |
+| JPL Horizons | 5 minutes |
+| Space Weather | 5 minutes |
+| NASA Blog | 1 hour |
+
+Press `r` at any time to force an immediate refresh of all sources.
 
 ## Color Themes
 
