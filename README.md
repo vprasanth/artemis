@@ -1,6 +1,6 @@
 # Artemis II Mission Dashboard
 
-A real-time terminal dashboard for tracking NASA's Artemis II crewed lunar flyby mission, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A real-time terminal dashboard for tracking NASA's [Artemis II](https://www.nasa.gov/humans-in-space/artemis/) crewed lunar flyby mission, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ![Artemis II Dashboard](screenshot.png)
 
@@ -54,7 +54,7 @@ The dashboard shows panels based on available terminal height, in priority order
 5. **Mission Timeline** -- Gantt chart or scrolling event list with 25 mission events
 6. **Mission Log** -- latest NASA blog posts with selection and browser opening
 7. **Trajectory** -- ASCII art Earth-to-Moon trajectory with twinkling stars and pulsing spacecraft (turns red during LOS)
-8. **Crew** -- the four Artemis II astronauts and their roles
+8. **Crew** -- the four [Artemis II astronauts](https://www.nasa.gov/feature/our-artemis-crew/) and their roles
 
 ## Data Refresh Rates
 
