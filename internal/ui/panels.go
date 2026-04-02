@@ -8,6 +8,7 @@ import (
 
 	"artemis/internal/dsn"
 	"artemis/internal/mission"
+	"artemis/internal/spaceweather"
 )
 
 func (m Model) View() string {
@@ -135,9 +136,11 @@ func renderSpacecraftPanel(m Model, w int) string {
 
 		var signalStr string
 		if s.IsOccluded() {
-			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorRed).Render("LOS")
+			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorRed).Render("LOS") +
+				"  " + dimStyle.Render("loss of signal — Moon blocking Earth contact")
 		} else {
-			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorGreen).Render("AOS")
+			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorGreen).Render("AOS") +
+				"  " + dimStyle.Render("acquisition of signal — Earth contact nominal")
 		}
 
 		content = fmt.Sprintf(
@@ -450,7 +453,9 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 		valueStyle.Render(s.CurrentFlareClass),
 	)
 
-	content := scales + "\n" + details
+	summary := swSummary(s)
+
+	content := scales + "\n" + details + "\n  " + summary
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("SPACE WEATHER") +
 			"  " + dimStyle.Render("NOAA/SWPC") + "\n" + content,
@@ -473,6 +478,30 @@ func formatScaleIndicator(prefix string, level int, label string) string {
 	}
 	indicator := style.Render(fmt.Sprintf("%s%d", prefix, level))
 	return fmt.Sprintf("%s %s", indicator, dimStyle.Render(label))
+}
+
+// swSummary returns a plain-language one-liner about current conditions.
+func swSummary(s *spaceweather.Status) string {
+	maxScale := s.RadioBlackout.Scale
+	if s.SolarRadiation.Scale > maxScale {
+		maxScale = s.SolarRadiation.Scale
+	}
+	if s.GeomagStorm.Scale > maxScale {
+		maxScale = s.GeomagStorm.Scale
+	}
+
+	var msg string
+	switch {
+	case maxScale >= 4 || s.Kp >= 7:
+		msg = "Severe space weather — possible comm disruptions and increased radiation exposure"
+	case maxScale >= 3 || s.Kp >= 5:
+		msg = "Elevated activity — minor comm interference possible, crew radiation dose monitored"
+	case maxScale >= 1 || s.Kp >= 4:
+		msg = "Mildly active — no impact to mission operations expected"
+	default:
+		msg = "All quiet — nominal conditions for crew and spacecraft"
+	}
+	return dimStyle.Render(msg)
 }
 
 func formatProtonFlux(flux float64) string {
