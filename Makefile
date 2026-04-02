@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 LDFLAGS  = -X main.version=$(VERSION)
 BINARY   = artemis
 
-.PHONY: build run clean tag release
+.PHONY: build run clean tag release changelog
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./main.go
@@ -19,6 +19,14 @@ ifndef TAG
 endif
 	git tag -a $(TAG) -m "$(TAG)"
 	git push origin $(TAG)
+
+changelog:
+	@LATEST=$$(git tag --sort=-v:refname | sed -n '1p'); \
+	PREV=$$(git tag --sort=-v:refname | sed -n '2p'); \
+	if [ -z "$$LATEST" ]; then echo "No tags found"; exit 1; fi; \
+	if [ -z "$$PREV" ]; then RANGE="$$LATEST"; else RANGE="$$PREV..$$LATEST"; fi; \
+	echo "## $$LATEST"; \
+	git log $$RANGE --format="- %s"
 
 release: clean
 	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-arm64  ./main.go
