@@ -8,15 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Orbital-specific styles (theme-independent, like trajectory).
-var (
-	orbitRingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
-	scaleRingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
-	scaleLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	trailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#4DD0E1"))
-	trailDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#336666"))
-)
-
 // renderOrbitalPanel renders the top-down Earth-Moon system map.
 func renderOrbitalPanel(m Model, w, plotH int) string {
 	plotW := w - 6

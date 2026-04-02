@@ -8,17 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Instrument-specific styles (theme-independent).
-var (
-	gaugeFilledStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#4FC3F7"))
-	gaugeEmptyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
-	sparklineStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4DD0E1"))
-	compassStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	compassLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#888888"))
-	scopeRingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
-	instTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4FC3F7"))
-)
-
 // renderInstrumentPanel renders the spacecraft instrument panel HUD.
 func renderInstrumentPanel(m Model, w, plotH int) string {
 	plotW := w - 6

@@ -44,9 +44,9 @@ var themes = map[ThemeID]Theme{
 		Primary:   lipgloss.Color("#FFBF00"),
 		Secondary: lipgloss.Color("#33FF33"),
 		Accent:    lipgloss.Color("#FFD700"),
-		Dim:       lipgloss.Color("#555500"),
+		Dim:       lipgloss.Color("#777711"),
 		Bright:    lipgloss.Color("#FFFF66"),
-		Muted:     lipgloss.Color("#999933"),
+		Muted:     lipgloss.Color("#AAAA44"),
 		Green:     lipgloss.Color("#33FF33"),
 		Red:       lipgloss.Color("#FF6600"),
 		Yellow:    lipgloss.Color("#FFFF00"),
@@ -66,15 +66,15 @@ var themes = map[ThemeID]Theme{
 	},
 	ThemeMissionCritical: {
 		Primary:   lipgloss.Color("#CC3333"),
-		Secondary: lipgloss.Color("#994444"),
+		Secondary: lipgloss.Color("#BB6655"),
 		Accent:    lipgloss.Color("#FF6644"),
-		Dim:       lipgloss.Color("#553333"),
+		Dim:       lipgloss.Color("#774444"),
 		Bright:    lipgloss.Color("#FFCCCC"),
-		Muted:     lipgloss.Color("#886666"),
+		Muted:     lipgloss.Color("#AA8888"),
 		Green:     lipgloss.Color("#669966"),
 		Red:       lipgloss.Color("#FF2222"),
 		Yellow:    lipgloss.Color("#FFAA44"),
-		Cyan:      lipgloss.Color("#CC6666"),
+		Cyan:      lipgloss.Color("#DD8888"),
 	},
 }
 
@@ -129,6 +129,36 @@ var (
 	logSelectedCursorStyle lipgloss.Style
 	logSelectedTimeStyle   lipgloss.Style
 	logSelectedTitleStyle  lipgloss.Style
+
+	// Trajectory view styles.
+	starDimStyle         lipgloss.Style
+	starMedStyle         lipgloss.Style
+	starBrightStyle      lipgloss.Style
+	earthGlyphStyle      lipgloss.Style
+	moonGlyphStyle       lipgloss.Style
+	spacecraftBright     lipgloss.Style
+	spacecraftDim        lipgloss.Style
+	spacecraftLOS        lipgloss.Style
+	spacecraftLOSDim     lipgloss.Style
+	pathOutboundStyle    lipgloss.Style
+	pathReturnStyle      lipgloss.Style
+	trajectoryLabelStyle lipgloss.Style
+
+	// Orbital view styles.
+	orbitRingStyle  lipgloss.Style
+	scaleRingStyle  lipgloss.Style
+	scaleLabelStyle lipgloss.Style
+	trailStyle      lipgloss.Style
+	trailDimStyle   lipgloss.Style
+
+	// Instrument panel styles.
+	gaugeFilledStyle  lipgloss.Style
+	gaugeEmptyStyle   lipgloss.Style
+	sparklineStyle    lipgloss.Style
+	compassStyle      lipgloss.Style
+	compassLabelStyle lipgloss.Style
+	scopeRingStyle    lipgloss.Style
+	instTitleStyle    lipgloss.Style
 )
 
 func init() {
@@ -257,6 +287,87 @@ func applyTheme(id ThemeID) {
 	logSelectedTitleStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(colorAccent)
+
+	// Trajectory view.
+	starDimStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	starMedStyle = lipgloss.NewStyle().
+		Foreground(colorMuted)
+
+	starBrightStyle = lipgloss.NewStyle().
+		Foreground(colorMuted)
+
+	earthGlyphStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorPrimary)
+
+	moonGlyphStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorBright)
+
+	spacecraftBright = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorAccent)
+
+	spacecraftDim = lipgloss.NewStyle().
+		Foreground(colorAccent)
+
+	spacecraftLOS = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorRed)
+
+	spacecraftLOSDim = lipgloss.NewStyle().
+		Foreground(colorRed)
+
+	pathOutboundStyle = lipgloss.NewStyle().
+		Foreground(colorCyan)
+
+	pathReturnStyle = lipgloss.NewStyle().
+		Foreground(colorSecondary)
+
+	trajectoryLabelStyle = lipgloss.NewStyle().
+		Foreground(colorMuted)
+
+	// Orbital view.
+	orbitRingStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	scaleRingStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	scaleLabelStyle = lipgloss.NewStyle().
+		Foreground(colorMuted)
+
+	trailStyle = lipgloss.NewStyle().
+		Foreground(colorCyan)
+
+	trailDimStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	// Instrument panel.
+	gaugeFilledStyle = lipgloss.NewStyle().
+		Foreground(colorPrimary)
+
+	gaugeEmptyStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	sparklineStyle = lipgloss.NewStyle().
+		Foreground(colorCyan)
+
+	compassStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	compassLabelStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorMuted)
+
+	scopeRingStyle = lipgloss.NewStyle().
+		Foreground(colorDim)
+
+	instTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorPrimary)
 }
 
 // NextTheme cycles to the next theme and applies it.

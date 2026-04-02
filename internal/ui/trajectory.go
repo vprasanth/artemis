@@ -10,24 +10,6 @@ import (
 	"artemis/internal/mission"
 )
 
-// Trajectory-specific styles (not theme-dependent since they use fixed colors
-// for visual consistency across themes).
-var (
-	starDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
-	starMedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	starBrightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
-
-	earthGlyphStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4FC3F7"))
-	moonGlyphStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E0E0E0"))
-	spacecraftBright     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6D00"))
-	spacecraftDim        = lipgloss.NewStyle().Foreground(lipgloss.Color("#BF5600"))
-	spacecraftLOS        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF1744"))
-	spacecraftLOSDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("#B71C1C"))
-	pathOutboundStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4DD0E1"))
-	pathReturnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#81C784"))
-	trajectoryLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-)
-
 func renderTrajectory(earthDist, moonDist float64, plotW, plotH int, tickCount uint64, showStars bool, occluded bool) string {
 	met := mission.MET()
 	progress := mission.MissionProgress()
