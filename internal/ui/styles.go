@@ -125,6 +125,10 @@ var (
 
 	logTimeStyle  lipgloss.Style
 	logTitleStyle lipgloss.Style
+
+	logSelectedCursorStyle lipgloss.Style
+	logSelectedTimeStyle   lipgloss.Style
+	logSelectedTitleStyle  lipgloss.Style
 )
 
 func init() {
@@ -241,6 +245,18 @@ func applyTheme(id ThemeID) {
 
 	logTitleStyle = lipgloss.NewStyle().
 		Foreground(colorBright)
+
+	logSelectedCursorStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorAccent)
+
+	logSelectedTimeStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorAccent)
+
+	logSelectedTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorAccent)
 }
 
 // NextTheme cycles to the next theme and applies it.

@@ -17,6 +17,7 @@ type Entry struct {
 	Time    time.Time
 	Title   string
 	Excerpt string
+	Link    string
 }
 
 type Status struct {
@@ -78,6 +79,7 @@ func (c *Client) Fetch() (*Status, error) {
 			Time:    t,
 			Title:   title,
 			Excerpt: excerpt,
+			Link:    r.Link,
 		})
 	}
 

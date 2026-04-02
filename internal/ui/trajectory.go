@@ -39,9 +39,11 @@ func renderTrajectory(earthDist, moonDist float64, plotW, plotH int, tickCount u
 		}
 	}
 
-	// Layer 1: Stars (background).
+	// Layer 1: Stars (background). When animation is off, stars are static.
 	if showStars {
 		placeStars(canvas, plotW, plotH, tickCount)
+	} else {
+		placeStars(canvas, plotW, plotH, 0)
 	}
 
 	// Compute body positions.

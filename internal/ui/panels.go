@@ -55,7 +55,7 @@ func (m Model) View() string {
 		sections = append(sections, m.cachedCrew)
 	}
 
-	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  |  %dx%d", ThemeName(), m.width, m.height))
+	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  tab/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
 	sections = append(sections, help)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -476,7 +476,7 @@ func formatProtonFlux(flux float64) string {
 	return valueStyle.Render(fmt.Sprintf("%.2f pfu", flux))
 }
 
-func renderMissionLogPanel(m Model, w int, maxEntries int) string {
+func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) string {
 	if m.blogStatus == nil {
 		var content string
 		if m.blogErr != nil {
@@ -500,23 +500,32 @@ func renderMissionLogPanel(m Model, w int, maxEntries int) string {
 	}
 
 	var lines []string
-	for _, entry := range entries {
+	for i, entry := range entries {
 		timeStr := entry.Time.Format("15:04Z")
 		title := entry.Title
 		if len(title) > maxTitle {
 			title = title[:maxTitle-3] + "..."
 		}
-		line := fmt.Sprintf("  %s  %s",
-			logTimeStyle.Render(timeStr),
-			logTitleStyle.Render(title),
-		)
-		lines = append(lines, line)
+		if i == selectedIdx {
+			line := fmt.Sprintf("  %s %s  %s",
+				logSelectedCursorStyle.Render("▸"),
+				logSelectedTimeStyle.Render(timeStr),
+				logSelectedTitleStyle.Render(title),
+			)
+			lines = append(lines, line)
+		} else {
+			line := fmt.Sprintf("    %s  %s",
+				logTimeStyle.Render(timeStr),
+				logTitleStyle.Render(title),
+			)
+			lines = append(lines, line)
+		}
 	}
 
 	content := strings.Join(lines, "\n")
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("MISSION LOG") +
-			"  " + dimStyle.Render("blogs.nasa.gov/artemis") + "\n" + content,
+			"  " + dimStyle.Render("tab: select  enter: open") + "\n" + content,
 	)
 }
 

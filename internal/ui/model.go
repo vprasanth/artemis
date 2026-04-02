@@ -2,6 +2,8 @@ package ui
 
 import (
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,6 +38,8 @@ type blogMsg struct {
 	err    error
 }
 
+type openBrowserMsg struct{ err error }
+
 type Model struct {
 	width  int
 	height int
@@ -61,9 +65,10 @@ type Model struct {
 	swErr     error
 	swLoading bool
 
-	blogStatus  *nasablog.Status
-	blogErr     error
-	blogLoading bool
+	blogStatus       *nasablog.Status
+	blogErr          error
+	blogLoading      bool
+	selectedLogEntry int
 
 	lastDSNFetch     time.Time
 	lastHorizonFetch time.Time
@@ -123,6 +128,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.showStars = !m.showStars
 			m.buildCache()
+		case "tab":
+			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
+				max := len(m.blogStatus.Entries) - 1
+				if max > 4 {
+					max = 4
+				}
+				m.selectedLogEntry = (m.selectedLogEntry + 1) % (max + 1)
+				m.buildCache()
+			}
+		case "shift+tab":
+			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
+				max := len(m.blogStatus.Entries) - 1
+				if max > 4 {
+					max = 4
+				}
+				m.selectedLogEntry = (m.selectedLogEntry - 1 + max + 1) % (max + 1)
+				m.buildCache()
+			}
+		case "enter":
+			if m.blogStatus != nil && m.selectedLogEntry < len(m.blogStatus.Entries) {
+				link := m.blogStatus.Entries[m.selectedLogEntry].Link
+				if link != "" {
+					return m, openBrowserCmd(link)
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -219,7 +249,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.blogStatus = msg.status
 			m.blogErr = nil
 		}
+		// Clamp selection to valid range.
+		if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
+			max := len(m.blogStatus.Entries) - 1
+			if max > 4 {
+				max = 4
+			}
+			if m.selectedLogEntry > max {
+				m.selectedLogEntry = max
+			}
+		} else {
+			m.selectedLogEntry = 0
+		}
 		m.buildCache()
+
+	case openBrowserMsg:
+		// Silently consume browser result.
 	}
 
 	return m, nil
@@ -239,7 +284,7 @@ func (m *Model) buildCache() {
 	m.cachedSpacecraft = renderSpacecraftPanel(*m, w-w/3)
 	m.cachedDSN = renderDSNPanel(*m, w)
 	m.cachedSW = renderSpaceWeatherPanel(*m, w)
-	m.cachedBlog = renderMissionLogPanel(*m, w, 5)
+	m.cachedBlog = renderMissionLogPanel(*m, w, 5, m.selectedLogEntry)
 	m.cachedCrew = renderCrewPanel(w)
 
 	if m.showGantt {
@@ -331,5 +376,20 @@ func fetchBlog(client *nasablog.Client) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Fetch()
 		return blogMsg{status: status, err: err}
+	}
+}
+
+func openBrowserCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", url)
+		case "linux":
+			cmd = exec.Command("xdg-open", url)
+		default:
+			cmd = exec.Command("xdg-open", url)
+		}
+		return openBrowserMsg{err: cmd.Start()}
 	}
 }
