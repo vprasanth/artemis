@@ -40,7 +40,9 @@ type Model struct {
 	width  int
 	height int
 
-	showGantt bool // toggle between Gantt chart and event timeline
+	showGantt bool   // toggle between Gantt chart and event timeline
+	showStars bool   // toggle starfield in trajectory
+	tickCount uint64 // monotonic frame counter for animation
 
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
@@ -84,6 +86,7 @@ type Model struct {
 func NewModel() Model {
 	return Model{
 		showGantt:      true,
+		showStars:      true,
 		dsnClient:      dsn.NewClient(),
 		horizonsClient: horizons.NewClient(),
 		swClient:       spaceweather.NewClient(),
@@ -114,6 +117,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			m.showGantt = !m.showGantt
 			m.buildCache()
+		case "c":
+			NextTheme()
+			m.buildCache()
+		case "s":
+			m.showStars = !m.showStars
+			m.buildCache()
 		}
 
 	case tea.WindowSizeMsg:
@@ -124,6 +133,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
+		m.tickCount++
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
 
@@ -134,6 +144,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.width = w
 				m.height = h
 				m.buildCache()
+			}
+		}
+
+		// Re-render trajectory every tick for animation (stars twinkle, spacecraft pulse).
+		if m.layout != nil {
+			if pl := m.layout[panelTrajectory]; pl.visible {
+				plotH := pl.height - 3
+				if plotH < 6 {
+					plotH = 6
+				}
+				m.cachedTrajectory = renderTrajectoryPanel(m, m.width, plotH)
 			}
 		}
 

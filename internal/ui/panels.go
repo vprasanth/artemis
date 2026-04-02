@@ -55,7 +55,7 @@ func (m Model) View() string {
 		sections = append(sections, m.cachedCrew)
 	}
 
-	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: toggle timeline  |  %dx%d  DSN ~5s  Horizons ~30s  Weather ~60s  Blog ~60s", m.width, m.height))
+	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  |  %dx%d", ThemeName(), m.width, m.height))
 	sections = append(sections, help)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -288,15 +288,16 @@ func renderTrajectoryPanel(m Model, w int, plotH int) string {
 	if plotW < 30 {
 		plotW = 30
 	}
-	if plotW > 60 {
-		plotW = 60
-	}
 
-	plot := renderTrajectory(earthDist, moonDist, plotW, plotH)
+	plot := renderTrajectory(earthDist, moonDist, plotW, plotH, m.tickCount, m.showStars)
+
+	legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
+		moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
+		spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
+		dimStyle.Render("s: stars")
 
 	return panelStyle.Width(w - 2).Render(
-		panelTitleStyle.Render("TRAJECTORY") +
-			"  " + dimStyle.Render("E=Earth  M=Moon  *=Orion") + "\n" + plot,
+		panelTitleStyle.Render("TRAJECTORY") + "  " + legend + "\n" + plot,
 	)
 }
 
