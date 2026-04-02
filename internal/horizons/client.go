@@ -28,10 +28,55 @@ type State struct {
 	Time          time.Time
 	Position      Vector3
 	Velocity      Vector3
+	MoonPosition  Vector3
 	EarthDist     float64
 	MoonDist      float64
 	Speed         float64
 	Timestamp     time.Time
+}
+
+// IsOccluded returns true when the Moon blocks line-of-sight from Earth to
+// the spacecraft. It checks whether the closest point on the Earth→SC line
+// passes within the Moon's physical radius (1737.4 km) of the Moon's center.
+func (s *State) IsOccluded() bool {
+	const moonRadius = 1737.4 // km
+
+	// Guard: MoonPosition not yet available.
+	if s.MoonPosition.X == 0 && s.MoonPosition.Y == 0 && s.MoonPosition.Z == 0 {
+		return false
+	}
+
+	// Earth is at origin. Spacecraft is at s.Position.
+	// Moon center (Earth-centered) = s.Position - s.MoonPosition
+	// because MoonPosition is the SC position relative to the Moon,
+	// so Moon = SC_earth - SC_moon.
+	moonX := s.Position.X - s.MoonPosition.X
+	moonY := s.Position.Y - s.MoonPosition.Y
+	moonZ := s.Position.Z - s.MoonPosition.Z
+
+	// Parameterize Earth→SC line as P(t) = t * Position, t ∈ [0,1].
+	// Vector from P(t) to Moon center: (moonX - t*Px, moonY - t*Py, moonZ - t*Pz)
+	// Minimize distance² → t = dot(Moon, SC) / dot(SC, SC).
+	dot_sc_sc := s.Position.X*s.Position.X + s.Position.Y*s.Position.Y + s.Position.Z*s.Position.Z
+	if dot_sc_sc == 0 {
+		return false
+	}
+
+	dot_moon_sc := moonX*s.Position.X + moonY*s.Position.Y + moonZ*s.Position.Z
+	t := dot_moon_sc / dot_sc_sc
+
+	// Moon must be between Earth and SC (not behind Earth or beyond SC).
+	if t <= 0 || t >= 1 {
+		return false
+	}
+
+	// Closest distance from the line to Moon center.
+	dx := moonX - t*s.Position.X
+	dy := moonY - t*s.Position.Y
+	dz := moonZ - t*s.Position.Z
+	dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+
+	return dist < moonRadius
 }
 
 type Client struct {
@@ -61,6 +106,7 @@ func (c *Client) Fetch() (*State, error) {
 		return earthState, nil
 	}
 
+	earthState.MoonPosition = moonState.Position
 	earthState.MoonDist = moonState.Position.Magnitude()
 	earthState.Timestamp = time.Now().UTC()
 	return earthState, nil

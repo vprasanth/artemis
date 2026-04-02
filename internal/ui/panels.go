@@ -133,8 +133,15 @@ func renderSpacecraftPanel(m Model, w int) string {
 			earthDist = m.dsnStatus.Range
 		}
 
+		var signalStr string
+		if s.IsOccluded() {
+			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorRed).Render("LOS")
+		} else {
+			signalStr = lipgloss.NewStyle().Bold(true).Foreground(colorGreen).Render("AOS")
+		}
+
 		content = fmt.Sprintf(
-			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s",
+			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s\n%s  %s",
 			labelStyle.Render("Earth Dist:"),
 			valueStyle.Render(formatDist(earthDist)),
 			labelStyle.Render("Moon Dist: "),
@@ -145,6 +152,8 @@ func renderSpacecraftPanel(m Model, w int) string {
 			dimStyle.Render(fmt.Sprintf("X:%.0f  Y:%.0f  Z:%.0f km", s.Position.X, s.Position.Y, s.Position.Z)),
 			labelStyle.Render("RTLT:      "),
 			formatRTLT(m),
+			labelStyle.Render("Signal:    "),
+			signalStr,
 		)
 	} else {
 		content = dimStyle.Render("Fetching spacecraft data...")
@@ -279,9 +288,11 @@ func renderTimelinePanel(w int) string {
 func renderTrajectoryPanel(m Model, w int, plotH int) string {
 	earthDist := 0.0
 	moonDist := 0.0
+	occluded := false
 	if m.hzState != nil {
 		earthDist = m.hzState.EarthDist
 		moonDist = m.hzState.MoonDist
+		occluded = m.hzState.IsOccluded()
 	}
 
 	plotW := w - 6
@@ -289,7 +300,7 @@ func renderTrajectoryPanel(m Model, w int, plotH int) string {
 		plotW = 30
 	}
 
-	plot := renderTrajectory(earthDist, moonDist, plotW, plotH, m.tickCount, m.showStars)
+	plot := renderTrajectory(earthDist, moonDist, plotW, plotH, m.tickCount, m.showStars, occluded)
 
 	legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
 		moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +

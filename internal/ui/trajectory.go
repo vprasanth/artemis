@@ -21,12 +21,14 @@ var (
 	moonGlyphStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E0E0E0"))
 	spacecraftBright     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6D00"))
 	spacecraftDim        = lipgloss.NewStyle().Foreground(lipgloss.Color("#BF5600"))
+	spacecraftLOS        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF1744"))
+	spacecraftLOSDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("#B71C1C"))
 	pathOutboundStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4DD0E1"))
 	pathReturnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#81C784"))
 	trajectoryLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 )
 
-func renderTrajectory(earthDist, moonDist float64, plotW, plotH int, tickCount uint64, showStars bool) string {
+func renderTrajectory(earthDist, moonDist float64, plotW, plotH int, tickCount uint64, showStars bool, occluded bool) string {
 	met := mission.MET()
 	progress := mission.MissionProgress()
 
@@ -86,10 +88,10 @@ func renderTrajectory(earthDist, moonDist float64, plotW, plotH int, tickCount u
 
 	isTLIDone := met >= mission.Timeline[8].METOffset
 	if !isTLIDone {
-		placeSpacecraft(canvas, earthX+2, earthY-1, plotW, plotH, tickCount)
+		placeSpacecraft(canvas, earthX+2, earthY-1, plotW, plotH, tickCount, occluded)
 	} else if scIdx >= 0 && scIdx < totalPoints {
 		sp := pathPoints[scIdx]
-		placeSpacecraft(canvas, sp.x, sp.y, plotW, plotH, tickCount)
+		placeSpacecraft(canvas, sp.x, sp.y, plotW, plotH, tickCount, occluded)
 	}
 
 	// Layer 6: Legend (bottom-right).
@@ -150,14 +152,22 @@ func placeGlyph(canvas [][]string, x, y, plotW int, center, left, right string, 
 	}
 }
 
-func placeSpacecraft(canvas [][]string, x, y, plotW, plotH int, tickCount uint64) {
+func placeSpacecraft(canvas [][]string, x, y, plotW, plotH int, tickCount uint64, occluded bool) {
 	if x < 0 || x >= plotW || y < 0 || y >= plotH {
 		return
 	}
-	if tickCount%4 < 2 {
-		canvas[y][x] = spacecraftBright.Render("*")
+	if occluded {
+		if tickCount%4 < 2 {
+			canvas[y][x] = spacecraftLOS.Render("*")
+		} else {
+			canvas[y][x] = spacecraftLOSDim.Render("+")
+		}
 	} else {
-		canvas[y][x] = spacecraftDim.Render("+")
+		if tickCount%4 < 2 {
+			canvas[y][x] = spacecraftBright.Render("*")
+		} else {
+			canvas[y][x] = spacecraftDim.Render("+")
+		}
 	}
 }
 
