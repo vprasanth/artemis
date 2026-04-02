@@ -68,13 +68,22 @@ func renderFooter(m Model, w int) string {
 	theme := ThemeName()
 	hiddenWide := hiddenPanelSummary(m, false)
 	hiddenCompact := hiddenPanelSummary(m, true)
-	trajectoryHidden := isPanelHidden(m, panelTrajectory)
+	viewWide := "v view"
+	viewCompact := "v view"
+	viewTight := "v"
+	if m.layout != nil {
+		if pl, ok := m.layout[panelTrajectory]; ok && !pl.visible {
+			viewWide = ""
+			viewCompact = ""
+			viewTight = ""
+		}
+	}
 
 	candidates := []string{
 		joinFooterParts(
 			"q/esc quit",
 			"t timeline",
-			"v view",
+			viewWide,
 			fmt.Sprintf("c theme(%s)", theme),
 			"s stars",
 			"r refresh",
@@ -85,7 +94,7 @@ func renderFooter(m Model, w int) string {
 		joinFooterParts(
 			"q quit",
 			"t tl",
-			"v view",
+			viewCompact,
 			fmt.Sprintf("c %s", theme),
 			"s stars",
 			"r",
@@ -94,21 +103,12 @@ func renderFooter(m Model, w int) string {
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			"q t v c s r log",
+			joinFooterParts("q", "t", viewTight, "c", "s", "r", "log"),
 			hiddenCompact,
 			fmt.Sprintf("%s %dx%d", theme, m.width, m.height),
 		),
-	}
-	if trajectoryHidden {
-		candidates = append(candidates,
-			joinFooterParts("v view", hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
-			joinFooterParts("v", fmt.Sprintf("%dx%d", m.width, m.height)),
-		)
-	} else {
-		candidates = append(candidates,
-			joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
-			fmt.Sprintf("%dx%d", m.width, m.height),
-		)
+		joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
+		fmt.Sprintf("%dx%d", m.width, m.height),
 	}
 
 	for _, candidate := range candidates {
@@ -167,14 +167,6 @@ func joinFooterParts(parts ...string) string {
 		filtered = append(filtered, part)
 	}
 	return strings.Join(filtered, "  |  ")
-}
-
-func isPanelHidden(m Model, id panelID) bool {
-	if m.layout == nil {
-		return false
-	}
-	pl, ok := m.layout[id]
-	return ok && !pl.visible
 }
 
 func renderHeader(w int) string {

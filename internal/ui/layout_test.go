@@ -74,7 +74,7 @@ func TestRenderTopRowUsesSharedHeight(t *testing.T) {
 	}
 }
 
-func TestRenderFooterKeepsViewShortcutWhenTrajectoryHidden(t *testing.T) {
+func TestRenderFooterOmitsViewShortcutWhenTrajectoryHidden(t *testing.T) {
 	m := Model{
 		width:  72,
 		height: 24,
@@ -83,8 +83,10 @@ func TestRenderFooterKeepsViewShortcutWhenTrajectoryHidden(t *testing.T) {
 		},
 	}
 
-	got := renderFooter(m, 16)
-	if !strings.Contains(got, "v") {
-		t.Fatalf("expected narrow footer to keep view shortcut when visualization is hidden, got %q", got)
+	for _, width := range []int{16, 72, 200} {
+		got := renderFooter(m, width)
+		if strings.Contains(got, "v view") {
+			t.Fatalf("expected footer width %d to omit view shortcut when visualization is hidden, got %q", width, got)
+		}
 	}
 }
