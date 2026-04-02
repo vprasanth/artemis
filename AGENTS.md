@@ -7,8 +7,10 @@ Built with Go, Bubble Tea (TUI framework), and Lipgloss (terminal styling).
 
 ```
 artemis/
-├── main.go                        # Entry point: initializes Bubble Tea program
+├── main.go                        # Entry point, --version flag, version via ldflags
 ├── go.mod / go.sum                # Go 1.26.1, bubbletea, lipgloss
+├── Makefile                       # build, run, clean, tag, release targets
+├── LICENSE                        # MIT
 └── internal/
     ├── ui/                        # Terminal UI layer
     │   ├── model.go               # Bubble Tea model, event loop, caching
@@ -36,12 +38,13 @@ artemis/
 
 **Data flow:**
 1. `model.go` creates HTTP clients for 4 external APIs
-2. A 200ms tick drives animation and polls APIs at staggered intervals
+2. A 500ms tick drives animation and polls APIs at staggered intervals
 3. Fetch results arrive as typed messages (dsnMsg, horizonsMsg, etc.)
 4. `buildCache()` pre-renders all panels, measures heights, runs layout engine
 5. `View()` assembles cached panel strings — no computation at render time
 
-**Polling intervals:** DSN 5s, Horizons 30s, Space Weather 60s, Blog 60s.
+**Polling intervals:** DSN 30s, Horizons 5min, Space Weather 5min, Blog 1hr.
+Press `r` to force-refresh all sources on demand.
 
 **Layout engine** (`layout.go`): Fixed-height panels are measured after rendering,
 then `computeLayout()` decides which fit. Trajectory is the flex panel that
@@ -93,5 +96,29 @@ in the spacecraft panel and red spacecraft glyph in the trajectory view.
 - `t` — Toggle Gantt chart vs scrolling timeline
 - `c` — Cycle color themes
 - `s` — Toggle starfield animation
+- `r` — Force-refresh all data sources
 - `j`/`k` — Navigate mission log entries
 - `Enter` — Open selected blog post in browser
+
+## Build & Release
+
+Version is embedded via `ldflags` (`-X main.version=...`). The `version` var
+in `main.go` defaults to `"dev"` for local builds. `--version`/`-v` flag prints
+and exits.
+
+**Makefile targets:**
+- `make` / `make build` — build for current platform with git-derived version
+- `make run` — build and run
+- `make clean` — remove all binaries
+- `make tag TAG=vX.Y.Z` — create annotated tag and push to remote
+- `make release` — cross-compile for darwin/linux × amd64/arm64
+
+Binary naming convention: `artemis-{os}-{arch}` (e.g. `artemis-darwin-arm64`).
+
+## Plain-Language Panel Descriptions
+
+The spacecraft panel shows AOS/LOS with a dim explanation ("acquisition of
+signal — Earth contact nominal" or "loss of signal — Moon blocking Earth
+contact"). The space weather panel includes a `swSummary()` one-liner that
+translates NOAA scales into crew-impact language (e.g. "All quiet — nominal
+conditions for crew and spacecraft").
