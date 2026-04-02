@@ -2,3 +2,12 @@ artemis
 artemis-*
 *.exe
 .DS_Store
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+credentials.json
+secrets.json
