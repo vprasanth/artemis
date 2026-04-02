@@ -8,9 +8,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const instrumentScopeXScale = 3
+
 // renderInstrumentPanel renders the spacecraft instrument panel HUD.
 func renderInstrumentPanel(m Model, w, plotH int) string {
-	plotW := w - 6
+	plotW := innerWidthFor(panelStyle, w)
 	if plotW < 30 {
 		plotW = 30
 	}
@@ -19,22 +21,56 @@ func renderInstrumentPanel(m Model, w, plotH int) string {
 
 	legend := dimStyle.Render("v: switch view")
 
-	return panelStyle.Width(w - 2).Render(
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
 		panelTitleStyle.Render("INSTRUMENTS") + "  " + legend + "\n" + plot,
 	)
 }
 
 func renderInstruments(m Model, plotW, plotH int) string {
-	// Column widths for the 2x3 grid.
+	if plotH < 9 {
+		return renderCompactInstruments(m, plotW, plotH)
+	}
+
+	// Split the panel evenly between telemetry bars and directional scopes.
+	leftW := plotW / 2
+	rightW := plotW - leftW
+
+	leftTopH := plotH * 35 / 100
+	leftMidH := plotH * 35 / 100
+	leftBotH := plotH - leftTopH - leftMidH
+
+	rightTopH := plotH / 2
+	rightBotH := plotH - rightTopH
+
+	statsLeftW := leftW / 2
+	statsRightW := leftW - statsLeftW
+
+	vel := renderVelocityGauge(m, leftW, leftTopH)
+	rng := renderRangeFinder(m, leftW, leftMidH)
+	sig := renderSignalHealth(m, statsLeftW, leftBotH)
+	rad := renderRadiation(m, statsRightW, leftBotH)
+
+	bearing := renderBearingDisplay(m, rightW, rightTopH)
+	prox := renderProximityScope(m, rightW, rightBotH)
+
+	leftColumn := lipgloss.JoinVertical(
+		lipgloss.Left,
+		vel,
+		rng,
+		lipgloss.JoinHorizontal(lipgloss.Top, sig, rad),
+	)
+	rightColumn := lipgloss.JoinVertical(lipgloss.Left, bearing, prox)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, rightColumn)
+}
+
+func renderCompactInstruments(m Model, plotW, plotH int) string {
 	col1W := plotW * 38 / 100
 	col2W := plotW * 30 / 100
 	col3W := plotW - col1W - col2W
 
 	topH := plotH / 2
 	botH := plotH - topH
-
-	// Each instrument returns a multi-line string at a fixed size.
-	// Use lipgloss to compose into a grid.
 
 	vel := renderVelocityGauge(m, col1W, topH)
 	rng := renderRangeFinder(m, col2W, topH)
@@ -162,15 +198,15 @@ func renderBearingDisplay(m Model, w, h int) string {
 		}
 	}
 
-	var lines []string
-	lines = append(lines, instTitleStyle.Render("BEARING")+" "+dimStyle.Render("ecliptic"))
+	title := instTitleStyle.Render("BEARING") + " " + dimStyle.Render("ecliptic") +
+		"  " + gaugeFilledStyle.Render(fmt.Sprintf("HDG %.0f°", bearing))
 
-	// Compass rose rendered into a [][]string canvas, then joined.
-	radius := (h - 3) / 2
+	// Use the full remaining box height for the compass rose and center it.
+	radius := (h - 2) / 2
 	if radius < 2 {
 		radius = 2
 	}
-	maxR := (w - 2) / 4
+	maxR := (w - 2) / (instrumentScopeXScale * 2)
 	if maxR < 2 {
 		maxR = 2
 	}
@@ -179,13 +215,12 @@ func renderBearingDisplay(m Model, w, h int) string {
 	}
 
 	rose := renderCompassRose(bearing, radius)
+	canvasRows := make([]string, 0, len(rose))
 	for _, row := range rose {
-		lines = append(lines, joinCanvasRow(row))
+		canvasRows = append(canvasRows, joinCanvasRow(row))
 	}
 
-	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("HDG %.0f°", bearing)))
-
-	return style.Render(strings.Join(lines, "\n"))
+	return style.Render(title + "\n" + centerCanvasBlock(canvasRows, w))
 }
 
 // --- Signal Health ---
@@ -322,15 +357,14 @@ func renderProximityScope(m Model, w, h int) string {
 		return style.Render("")
 	}
 
-	var lines []string
-	lines = append(lines, instTitleStyle.Render("PROXIMITY"))
+	title := instTitleStyle.Render("PROXIMITY")
 
-	// Radar-style sub-canvas
+	// Radar-style scope fills the remaining box height and is centered.
 	radius := (h - 2) / 2
 	if radius < 2 {
 		radius = 2
 	}
-	maxR := (w - 2) / 4
+	maxR := (w - 2) / (instrumentScopeXScale * 2)
 	if maxR < 2 {
 		maxR = 2
 	}
@@ -339,11 +373,12 @@ func renderProximityScope(m Model, w, h int) string {
 	}
 
 	scope := renderProximityScopeCanvas(m, radius)
+	canvasRows := make([]string, 0, len(scope))
 	for _, row := range scope {
-		lines = append(lines, joinCanvasRow(row))
+		canvasRows = append(canvasRows, joinCanvasRow(row))
 	}
 
-	return style.Render(strings.Join(lines, "\n"))
+	return style.Render(title + "\n" + centerCanvasBlock(canvasRows, w))
 }
 
 // --- Helper Functions ---
@@ -355,6 +390,14 @@ func joinCanvasRow(row []string) string {
 		sb.WriteString(cell)
 	}
 	return sb.String()
+}
+
+func centerCanvasBlock(rows []string, width int) string {
+	centered := make([]string, 0, len(rows))
+	for _, row := range rows {
+		centered = append(centered, lipgloss.PlaceHorizontal(width, lipgloss.Center, row))
+	}
+	return strings.Join(centered, "\n")
 }
 
 // renderSparkline generates a sparkline string from data using block characters.
@@ -420,7 +463,7 @@ func renderHBar(value, max float64, width int, filled, empty lipgloss.Style) str
 // renderCompassRose renders a small compass into a [][]string canvas.
 func renderCompassRose(bearing float64, radius int) [][]string {
 	size := radius*2 + 1
-	widthSize := radius*4 + 1
+	widthSize := radius*instrumentScopeXScale*2 + 1
 	rose := make([][]string, size)
 	for i := range rose {
 		rose[i] = make([]string, widthSize)
@@ -439,7 +482,7 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 	}
 	for i := 0; i < steps; i++ {
 		angle := 2.0 * math.Pi * float64(i) / float64(steps)
-		x := cx + int(math.Round(float64(radius)*2.0*math.Cos(angle)))
+		x := cx + int(math.Round(float64(radius*instrumentScopeXScale)*math.Cos(angle)))
 		y := cy + int(math.Round(float64(radius)*math.Sin(angle)))
 		if x >= 0 && x < widthSize && y >= 0 && y < size {
 			rose[y][x] = compassStyle.Render("·")
@@ -453,16 +496,16 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 	if cy+radius < size {
 		rose[cy+radius][cx] = compassLabelStyle.Render("S")
 	}
-	if cx-radius*2 >= 0 {
-		rose[cy][cx-radius*2] = compassLabelStyle.Render("W")
+	if cx-radius*instrumentScopeXScale >= 0 {
+		rose[cy][cx-radius*instrumentScopeXScale] = compassLabelStyle.Render("W")
 	}
-	if cx+radius*2 < widthSize {
-		rose[cy][cx+radius*2] = compassLabelStyle.Render("E")
+	if cx+radius*instrumentScopeXScale < widthSize {
+		rose[cy][cx+radius*instrumentScopeXScale] = compassLabelStyle.Render("E")
 	}
 
 	// Heading indicator (bearing measured from N clockwise, so offset by -π/2)
 	bearingRad := bearing * math.Pi / 180.0
-	hx := cx + int(math.Round(float64(radius-1)*2.0*math.Cos(bearingRad-math.Pi/2)))
+	hx := cx + int(math.Round(float64((radius-1)*instrumentScopeXScale)*math.Cos(bearingRad-math.Pi/2)))
 	hy := cy + int(math.Round(float64(radius-1)*math.Sin(bearingRad-math.Pi/2)))
 	if hx >= 0 && hx < widthSize && hy >= 0 && hy < size {
 		rose[hy][hx] = spacecraftBright.Render("*")
@@ -477,7 +520,7 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 // renderProximityScopeCanvas renders radar-style rings with Moon plotted.
 func renderProximityScopeCanvas(m Model, radius int) [][]string {
 	size := radius*2 + 1
-	widthSize := radius*4 + 1
+	widthSize := radius*instrumentScopeXScale*2 + 1
 	scope := make([][]string, size)
 	for i := range scope {
 		scope[i] = make([]string, widthSize)
@@ -497,7 +540,7 @@ func renderProximityScopeCanvas(m Model, radius int) [][]string {
 		}
 		for i := 0; i < steps; i++ {
 			angle := 2.0 * math.Pi * float64(i) / float64(steps)
-			x := cx + int(math.Round(float64(r)*2.0*math.Cos(angle)))
+			x := cx + int(math.Round(float64(r*instrumentScopeXScale)*math.Cos(angle)))
 			y := cy + int(math.Round(float64(r)*math.Sin(angle)))
 			if x >= 0 && x < widthSize && y >= 0 && y < size {
 				scope[y][x] = scopeRingStyle.Render("·")
@@ -528,7 +571,7 @@ func renderProximityScopeCanvas(m Model, radius int) [][]string {
 			normDist = 1
 		}
 		moonR := normDist * float64(radius)
-		mx := cx + int(math.Round(moonR*2.0*math.Cos(moonBearing)))
+		mx := cx + int(math.Round(moonR*float64(instrumentScopeXScale)*math.Cos(moonBearing)))
 		my := cy + int(math.Round(moonR*math.Sin(moonBearing)))
 		if mx >= 0 && mx+2 < widthSize && my >= 0 && my < size {
 			scope[my][mx] = moonGlyphStyle.Render("[")

@@ -31,8 +31,7 @@ func (m Model) View() string {
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
-	clockPanel := renderClockPanel(w / 3)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
+	topRow := renderTopRow(m, w)
 
 	var sections []string
 	sections = append(sections, header, topRow)
@@ -56,13 +55,126 @@ func (m Model) View() string {
 		sections = append(sections, m.cachedCrew)
 	}
 
-	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  v: view  c: theme (%s)  s: stars  r: refresh  j/k/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
+	help := renderFooter(m, w)
 	sections = append(sections, help)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	// Fill entire terminal: center horizontally, top-align vertically.
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, result)
+}
+
+func renderFooter(m Model, w int) string {
+	theme := ThemeName()
+	hiddenWide := hiddenPanelSummary(m, false)
+	hiddenCompact := hiddenPanelSummary(m, true)
+	trajectoryHidden := isPanelHidden(m, panelTrajectory)
+
+	candidates := []string{
+		joinFooterParts(
+			"q/esc quit",
+			"t timeline",
+			"v view",
+			fmt.Sprintf("c theme(%s)", theme),
+			"s stars",
+			"r refresh",
+			"j/k/enter log",
+			hiddenWide,
+			fmt.Sprintf("%dx%d", m.width, m.height),
+		),
+		joinFooterParts(
+			"q quit",
+			"t tl",
+			"v view",
+			fmt.Sprintf("c %s", theme),
+			"s stars",
+			"r",
+			"log nav",
+			hiddenCompact,
+			fmt.Sprintf("%dx%d", m.width, m.height),
+		),
+		joinFooterParts(
+			"q t v c s r log",
+			hiddenCompact,
+			fmt.Sprintf("%s %dx%d", theme, m.width, m.height),
+		),
+	}
+	if trajectoryHidden {
+		candidates = append(candidates,
+			joinFooterParts("v view", hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
+			joinFooterParts("v", fmt.Sprintf("%dx%d", m.width, m.height)),
+		)
+	} else {
+		candidates = append(candidates,
+			joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
+			fmt.Sprintf("%dx%d", m.width, m.height),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= w {
+			return helpStyle.Width(w).Align(lipgloss.Center).Render(candidate)
+		}
+	}
+
+	return helpStyle.Width(w).Align(lipgloss.Center).Render(candidates[len(candidates)-1])
+}
+
+func hiddenPanelSummary(m Model, compact bool) string {
+	if m.layout == nil {
+		return ""
+	}
+
+	panelNames := []struct {
+		id      panelID
+		wide    string
+		compact string
+	}{
+		{panelTrajectory, "visualization", "viz"},
+		{panelTimeline, "timeline", "tl"},
+		{panelSpaceWeather, "weather", "wx"},
+		{panelDSN, "dsn", "dsn"},
+		{panelMissionLog, "log", "log"},
+		{panelCrew, "crew", "crew"},
+	}
+
+	var hidden []string
+	for _, panel := range panelNames {
+		pl, ok := m.layout[panel.id]
+		if !ok || pl.visible {
+			continue
+		}
+		if compact {
+			hidden = append(hidden, panel.compact)
+		} else {
+			hidden = append(hidden, panel.wide)
+		}
+	}
+
+	if len(hidden) == 0 {
+		return ""
+	}
+
+	return "hidden: " + strings.Join(hidden, ",")
+}
+
+func joinFooterParts(parts ...string) string {
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return strings.Join(filtered, "  |  ")
+}
+
+func isPanelHidden(m Model, id panelID) bool {
+	if m.layout == nil {
+		return false
+	}
+	pl, ok := m.layout[id]
+	return ok && !pl.visible
 }
 
 func renderHeader(w int) string {
@@ -79,13 +191,30 @@ func renderHeader(w int) string {
 	bar := progressFullStyle.Render(strings.Repeat("━", filled)) +
 		progressEmptyStyle.Render(strings.Repeat("─", barWidth-filled))
 
-	title := titleStyle.Width(w - 2).Align(lipgloss.Center).
+	title := titleStyle.Width(renderWidthFor(titleStyle, w)).Align(lipgloss.Center).
 		Render("ARTEMIS II  ─  Orion \"Integrity\"  ─  Lunar Flyby Mission")
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, "  "+bar)
 }
 
-func renderClockPanel(w int) string {
+func renderTopRow(m Model, w int) string {
+	clockW, spacecraftW := splitWidthEvenly(w)
+
+	clockPanel := renderClockPanel(clockW, 0)
+	spacecraftPanel := renderSpacecraftPanel(m, spacecraftW, 0)
+
+	targetHeight := measureHeight(clockPanel)
+	if spacecraftHeight := measureHeight(spacecraftPanel); spacecraftHeight > targetHeight {
+		targetHeight = spacecraftHeight
+	}
+
+	clockPanel = renderClockPanel(clockW, targetHeight)
+	spacecraftPanel = renderSpacecraftPanel(m, spacecraftW, targetHeight)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, spacecraftPanel)
+}
+
+func renderClockPanel(w, totalHeight int) string {
 	met := mission.MET()
 	day := mission.MissionDay()
 	metStr := mission.FormatMET(met)
@@ -114,12 +243,19 @@ func renderClockPanel(w int) string {
 		nextLine,
 	)
 
-	return panelStyle.Width(w - 2).Render(
-		panelTitleStyle.Render("MISSION CLOCK") + "\n" + content,
-	)
+	style := panelStyle.Width(renderWidthFor(panelStyle, w))
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(panelTitleStyle.Render("MISSION CLOCK") + "\n" + content)
 }
 
-func renderSpacecraftPanel(m Model, w int) string {
+func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 	var content string
 
 	if m.hzErr != nil && m.hzState == nil {
@@ -162,9 +298,16 @@ func renderSpacecraftPanel(m Model, w int) string {
 		content = dimStyle.Render("Fetching spacecraft data...")
 	}
 
-	return panelStyle.Width(w - 2).Render(
-		panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + content,
-	)
+	style := panelStyle.Width(renderWidthFor(panelStyle, w))
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + content)
 }
 
 func renderDSNPanel(m Model, w int) string {
@@ -286,8 +429,6 @@ func renderTimelinePanel(w int) string {
 	)
 }
 
-
-
 func renderTrajectoryPanel(m Model, w int, plotH int) string {
 	earthDist := 0.0
 	moonDist := 0.0
@@ -298,7 +439,7 @@ func renderTrajectoryPanel(m Model, w int, plotH int) string {
 		occluded = m.hzState.IsOccluded()
 	}
 
-	plotW := w - 6
+	plotW := innerWidthFor(panelStyle, w)
 	if plotW < 30 {
 		plotW = 30
 	}
@@ -310,7 +451,7 @@ func renderTrajectoryPanel(m Model, w int, plotH int) string {
 		spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
 		dimStyle.Render("s: stars")
 
-	return panelStyle.Width(w - 2).Render(
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
 		panelTitleStyle.Render("TRAJECTORY") + "  " + legend + "\n" + plot,
 	)
 }
@@ -568,4 +709,3 @@ func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) stri
 			"  " + dimStyle.Render("j/k: select  enter: open") + "\n" + content,
 	)
 }
-

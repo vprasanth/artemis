@@ -1,6 +1,6 @@
 package ui
 
-import "strings"
+import "github.com/charmbracelet/lipgloss"
 
 type panelID int
 
@@ -71,13 +71,30 @@ func computeLayout(w, termHeight, fixedHeight int, measured map[panelID]int) (ma
 	return layout, trajectoryAvail
 }
 
-func countLines(s string) int {
+func measureHeight(s string) int {
 	if s == "" {
 		return 0
 	}
-	n := strings.Count(s, "\n") + 1
-	if strings.HasSuffix(s, "\n") {
-		n--
+	return lipgloss.Height(s)
+}
+
+func renderWidthFor(style lipgloss.Style, totalWidth int) int {
+	width := totalWidth - style.GetHorizontalBorderSize()
+	if width < 0 {
+		return 0
 	}
-	return n
+	return width
+}
+
+func innerWidthFor(style lipgloss.Style, totalWidth int) int {
+	width := totalWidth - style.GetHorizontalFrameSize()
+	if width < 0 {
+		return 0
+	}
+	return width
+}
+
+func splitWidthEvenly(totalWidth int) (int, int) {
+	left := totalWidth / 2
+	return left, totalWidth - left
 }

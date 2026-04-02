@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
 	"artemis/internal/dsn"
@@ -17,8 +16,8 @@ import (
 )
 
 const (
-	maxSpeedHistory   = 24
-	maxPositionTrail  = 12
+	maxSpeedHistory  = 24
+	maxPositionTrail = 12
 )
 
 type tickMsg time.Time
@@ -89,7 +88,6 @@ type Model struct {
 
 	// Pre-rendered panel strings, rebuilt only when data or size changes.
 	cachedDSN        string
-	cachedSpacecraft string
 	cachedTrajectory string
 	cachedCrew       string
 	cachedSW         string
@@ -331,7 +329,6 @@ func (m *Model) buildCache() {
 	w := m.width
 
 	// Phase 1: Render fixed-height panels.
-	m.cachedSpacecraft = renderSpacecraftPanel(*m, w-w/3)
 	m.cachedDSN = renderDSNPanel(*m, w)
 	m.cachedSW = renderSpaceWeatherPanel(*m, w)
 	m.cachedBlog = renderMissionLogPanel(*m, w, 5, m.selectedLogEntry)
@@ -345,18 +342,17 @@ func (m *Model) buildCache() {
 
 	// Phase 2: Measure fixed-height panels.
 	measured := map[panelID]int{
-		panelDSN:          countLines(m.cachedDSN),
-		panelTimeline:     countLines(m.cachedTimeline),
-		panelSpaceWeather: countLines(m.cachedSW),
-		panelMissionLog:   countLines(m.cachedBlog),
-		panelCrew:         countLines(m.cachedCrew),
+		panelDSN:          measureHeight(m.cachedDSN),
+		panelTimeline:     measureHeight(m.cachedTimeline),
+		panelSpaceWeather: measureHeight(m.cachedSW),
+		panelMissionLog:   measureHeight(m.cachedBlog),
+		panelCrew:         measureHeight(m.cachedCrew),
 	}
 
 	// Measure always-visible panels for the fixed height budget.
 	header := renderHeader(w)
-	clockPanel := renderClockPanel(w / 3)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
-	fixedHeight := countLines(header) + countLines(topRow) + 1 // +1 for help line
+	topRow := renderTopRow(*m, w)
+	fixedHeight := measureHeight(header) + measureHeight(topRow) + 1 // +1 for help line
 
 	// Phase 3: Layout decides which fixed panels fit; trajectory gets remaining space.
 	var trajectoryAvail int
@@ -369,19 +365,34 @@ func (m *Model) buildCache() {
 		if plotH < 6 {
 			plotH = 6
 		}
-		switch m.trajectoryView {
-		case 1:
-			m.cachedTrajectory = renderOrbitalPanel(*m, w, plotH)
-		case 2:
-			m.cachedTrajectory = renderInstrumentPanel(*m, w, plotH)
-		default:
-			m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
+		for plotH >= 6 {
+			switch m.trajectoryView {
+			case 1:
+				m.cachedTrajectory = renderOrbitalPanel(*m, w, plotH)
+			case 2:
+				m.cachedTrajectory = renderInstrumentPanel(*m, w, plotH)
+			default:
+				m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
+			}
+
+			actualHeight := measureHeight(m.cachedTrajectory)
+			if actualHeight <= trajectoryAvail {
+				m.layout[panelTrajectory] = panelLayout{visible: true, height: actualHeight, width: w}
+				break
+			}
+
+			plotH -= actualHeight - trajectoryAvail
+			if plotH < 6 {
+				m.cachedTrajectory = ""
+				m.layout[panelTrajectory] = panelLayout{visible: false, height: 0, width: w}
+				break
+			}
 		}
 	}
 
 	// Store effective width for View().
-	m.layout[panelHeader] = panelLayout{visible: true, height: countLines(header), width: w}
-	m.layout[panelTopRow] = panelLayout{visible: true, height: countLines(topRow), width: w}
+	m.layout[panelHeader] = panelLayout{visible: true, height: measureHeight(header), width: w}
+	m.layout[panelTopRow] = panelLayout{visible: true, height: measureHeight(topRow), width: w}
 	m.layout[panelHelp] = panelLayout{visible: true, height: 1, width: w}
 
 	// Clear hidden panels.

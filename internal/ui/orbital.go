@@ -10,7 +10,7 @@ import (
 
 // renderOrbitalPanel renders the top-down Earth-Moon system map.
 func renderOrbitalPanel(m Model, w, plotH int) string {
-	plotW := w - 6
+	plotW := innerWidthFor(panelStyle, w)
 	if plotW < 30 {
 		plotW = 30
 	}
@@ -22,7 +22,7 @@ func renderOrbitalPanel(m Model, w, plotH int) string {
 		spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
 		dimStyle.Render("v: switch view")
 
-	return panelStyle.Width(w - 2).Render(
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
 		panelTitleStyle.Render("ORBITAL CONTEXT") + "  " + legend + "\n" + plot,
 	)
 }
