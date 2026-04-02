@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"artemis/internal/dsn"
+	"artemis/internal/horizons"
 	"artemis/internal/mission"
 	"artemis/internal/spaceweather"
 )
@@ -334,15 +336,21 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 		}
 
 		content = fmt.Sprintf(
-			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s\n%s  %s",
+			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s\n%s  %s\n%s  %s",
 			labelStyle.Render("Earth Dist:"),
 			valueStyle.Render(formatDist(earthDist)),
 			labelStyle.Render("Moon Dist: "),
 			valueStyle.Render(formatMoonDist(moonDist)),
 			labelStyle.Render("Speed:     "),
 			valueStyle.Render(fmt.Sprintf("%.3f km/s  (%.0f km/h)", s.Speed, s.Speed*3600)),
+			labelStyle.Render("Earth Rate:"),
+			formatEarthRate(s),
+			labelStyle.Render("Ecl Lon/Lat:"),
+			formatEclipticCoords(s.Position),
 			labelStyle.Render("Position:  "),
 			dimStyle.Render(fmt.Sprintf("X:%.0f  Y:%.0f  Z:%.0f km", s.Position.X, s.Position.Y, s.Position.Z)),
+			labelStyle.Render("Data Age:  "),
+			formatStateAge(m, time.Now()),
 			labelStyle.Render("RTLT:      "),
 			formatRTLT(m),
 			labelStyle.Render("Signal:    "),
@@ -542,6 +550,93 @@ func formatMoonDist(km float64) string {
 		return dimStyle.Render("calculating...")
 	}
 	return formatDist(km)
+}
+
+func formatEarthRate(s *horizons.State) string {
+	rate, ok := radialVelocity(s.Position, s.Velocity)
+	if !ok {
+		return dimStyle.Render("n/a")
+	}
+
+	direction := "steady"
+	switch {
+	case rate > 0.005:
+		direction = "outbound"
+	case rate < -0.005:
+		direction = "inbound"
+	}
+
+	return valueStyle.Render(fmt.Sprintf("%+.3f km/s", rate)) + dimStyle.Render(" "+direction)
+}
+
+func radialVelocity(position, velocity horizons.Vector3) (float64, bool) {
+	mag := position.Magnitude()
+	if mag == 0 {
+		return 0, false
+	}
+
+	return (position.X*velocity.X + position.Y*velocity.Y + position.Z*velocity.Z) / mag, true
+}
+
+func formatEclipticCoords(position horizons.Vector3) string {
+	lon, lat, ok := eclipticCoords(position)
+	if !ok {
+		return dimStyle.Render("n/a")
+	}
+
+	return valueStyle.Render(fmt.Sprintf("%.1f° / %+.1f°", lon, lat))
+}
+
+func eclipticCoords(position horizons.Vector3) (float64, float64, bool) {
+	r := position.Magnitude()
+	if r == 0 {
+		return 0, 0, false
+	}
+
+	lon := math.Atan2(position.Y, position.X) * 180 / math.Pi
+	if lon < 0 {
+		lon += 360
+	}
+
+	lat := math.Atan2(position.Z, math.Hypot(position.X, position.Y)) * 180 / math.Pi
+	return lon, lat, true
+}
+
+func formatStateAge(m Model, now time.Time) string {
+	parts := make([]string, 0, 2)
+
+	if m.hzState != nil && !m.hzState.Timestamp.IsZero() {
+		parts = append(parts, valueStyle.Render("HZ "+formatDataAge(now.Sub(m.hzState.Timestamp))))
+	}
+	if m.dsnStatus != nil && !m.dsnStatus.Timestamp.IsZero() {
+		parts = append(parts, valueStyle.Render("DSN "+formatDataAge(now.Sub(m.dsnStatus.Timestamp))))
+	}
+
+	if len(parts) == 0 {
+		return dimStyle.Render("n/a")
+	}
+
+	return strings.Join(parts, dimStyle.Render("  "))
+}
+
+func formatDataAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+
+	age = age.Round(time.Second)
+	if age < time.Minute {
+		return fmt.Sprintf("%ds", int(age/time.Second))
+	}
+	if age < time.Hour {
+		minutes := int(age / time.Minute)
+		seconds := int((age % time.Minute) / time.Second)
+		return fmt.Sprintf("%dm%02ds", minutes, seconds)
+	}
+
+	hours := int(age / time.Hour)
+	minutes := int((age % time.Hour) / time.Minute)
+	return fmt.Sprintf("%dh%02dm", hours, minutes)
 }
 
 func formatRTLT(m Model) string {

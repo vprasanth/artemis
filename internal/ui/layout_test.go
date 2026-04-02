@@ -46,15 +46,17 @@ func TestRenderTopRowUsesSharedHeight(t *testing.T) {
 	m := Model{
 		hzState: &horizons.State{
 			Position:     horizons.Vector3{X: 12310, Y: -45027, Z: 3771},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 2.6, Z: -0.1},
 			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
 			EarthDist:    37900,
 			MoonDist:     339579,
 			Speed:        2.726,
+			Timestamp:    time.Now().Add(-8 * time.Second),
 		},
 		dsnStatus: &dsn.Status{
 			Range:     37900,
 			RTLT:      0.25,
-			Timestamp: time.Now(),
+			Timestamp: time.Now().Add(-3 * time.Second),
 		},
 	}
 
@@ -71,6 +73,75 @@ func TestRenderTopRowUsesSharedHeight(t *testing.T) {
 	got := renderTopRow(m, w)
 	if measureHeight(got) != wantHeight {
 		t.Fatalf("top row height = %d, want %d", measureHeight(got), wantHeight)
+	}
+}
+
+func TestRenderSpacecraftPanelShowsDerivedTelemetry(t *testing.T) {
+	now := time.Now()
+	m := Model{
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    now.Add(-8 * time.Second),
+		},
+		dsnStatus: &dsn.Status{
+			RTLT:      0.25,
+			Timestamp: now.Add(-3 * time.Second),
+		},
+	}
+
+	got := renderSpacecraftPanel(m, 60, 0)
+	for _, want := range []string{"Earth Rate:", "Ecl Lon/Lat:", "Data Age:", "HZ 8s", "DSN 3s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected spacecraft panel to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRadialVelocity(t *testing.T) {
+	got, ok := radialVelocity(
+		horizons.Vector3{X: 1000, Y: 0, Z: 0},
+		horizons.Vector3{X: -2.5, Y: 1, Z: 0},
+	)
+	if !ok {
+		t.Fatal("expected radial velocity to be computable")
+	}
+	if got != -2.5 {
+		t.Fatalf("radialVelocity() = %v, want -2.5", got)
+	}
+}
+
+func TestEclipticCoords(t *testing.T) {
+	lon, lat, ok := eclipticCoords(horizons.Vector3{X: 1, Y: 1, Z: 1})
+	if !ok {
+		t.Fatal("expected ecliptic coordinates to be computable")
+	}
+	if lon < 44.9 || lon > 45.1 {
+		t.Fatalf("longitude = %v, want about 45", lon)
+	}
+	if lat < 35.2 || lat > 35.3 {
+		t.Fatalf("latitude = %v, want about 35.26", lat)
+	}
+}
+
+func TestFormatDataAge(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{8 * time.Second, "8s"},
+		{2*time.Minute + 5*time.Second, "2m05s"},
+		{90*time.Minute + 4*time.Second, "1h30m"},
+	}
+
+	for _, tc := range cases {
+		if got := formatDataAge(tc.in); got != tc.want {
+			t.Fatalf("formatDataAge(%v) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
