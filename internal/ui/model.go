@@ -128,7 +128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.showStars = !m.showStars
 			m.buildCache()
-		case "tab":
+		case "tab", "j":
 			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
 				max := len(m.blogStatus.Entries) - 1
 				if max > 4 {
@@ -137,7 +137,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedLogEntry = (m.selectedLogEntry + 1) % (max + 1)
 				m.buildCache()
 			}
-		case "shift+tab":
+		case "shift+tab", "k":
 			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
 				max := len(m.blogStatus.Entries) - 1
 				if max > 4 {

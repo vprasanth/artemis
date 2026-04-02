@@ -55,7 +55,7 @@ func (m Model) View() string {
 		sections = append(sections, m.cachedCrew)
 	}
 
-	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  tab/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
+	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  j/k/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
 	sections = append(sections, help)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -525,7 +525,7 @@ func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) stri
 	content := strings.Join(lines, "\n")
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("MISSION LOG") +
-			"  " + dimStyle.Render("tab: select  enter: open") + "\n" + content,
+			"  " + dimStyle.Render("j/k: select  enter: open") + "\n" + content,
 	)
 }
 
