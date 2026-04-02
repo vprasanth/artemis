@@ -7,6 +7,7 @@ import (
 
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
+	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
 )
 
@@ -27,13 +28,21 @@ type swMsg struct {
 	err    error
 }
 
+type blogMsg struct {
+	status *nasablog.Status
+	err    error
+}
+
 type Model struct {
 	width  int
 	height int
 
+	showGantt bool // toggle between Gantt chart and event timeline
+
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
 	swClient       *spaceweather.Client
+	blogClient     *nasablog.Client
 
 	dsnStatus  *dsn.Status
 	dsnErr     error
@@ -47,9 +56,14 @@ type Model struct {
 	swErr     error
 	swLoading bool
 
+	blogStatus  *nasablog.Status
+	blogErr     error
+	blogLoading bool
+
 	lastDSNFetch     time.Time
 	lastHorizonFetch time.Time
 	lastSWFetch      time.Time
+	lastBlogFetch    time.Time
 
 	// Pre-rendered panel strings, rebuilt only when data or size changes.
 	cachedDSN        string
@@ -57,16 +71,20 @@ type Model struct {
 	cachedTrajectory string
 	cachedCrew       string
 	cachedSW         string
+	cachedBlog       string
 }
 
 func NewModel() Model {
 	return Model{
+		showGantt:      true,
 		dsnClient:      dsn.NewClient(),
 		horizonsClient: horizons.NewClient(),
 		swClient:       spaceweather.NewClient(),
+		blogClient:     nasablog.NewClient(),
 		dsnLoading:     true,
 		hzLoading:      true,
 		swLoading:      true,
+		blogLoading:    true,
 	}
 }
 
@@ -76,6 +94,7 @@ func (m Model) Init() tea.Cmd {
 		fetchDSN(m.dsnClient),
 		fetchHorizons(m.horizonsClient),
 		fetchSW(m.swClient),
+		fetchBlog(m.blogClient),
 	)
 }
 
@@ -85,6 +104,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
+		case "t":
+			m.showGantt = !m.showGantt
 		}
 
 	case tea.WindowSizeMsg:
@@ -108,6 +129,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if now.Sub(m.lastSWFetch) > 60*time.Second && !m.swLoading {
 			m.swLoading = true
 			cmds = append(cmds, fetchSW(m.swClient))
+		}
+		if now.Sub(m.lastBlogFetch) > 60*time.Second && !m.blogLoading {
+			m.blogLoading = true
+			cmds = append(cmds, fetchBlog(m.blogClient))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -143,6 +168,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.swErr = nil
 		}
 		m.buildCache()
+
+	case blogMsg:
+		m.blogLoading = false
+		m.lastBlogFetch = time.Now()
+		if msg.err != nil {
+			m.blogErr = msg.err
+		} else {
+			m.blogStatus = msg.status
+			m.blogErr = nil
+		}
+		m.buildCache()
 	}
 
 	return m, nil
@@ -159,9 +195,10 @@ func (m *Model) buildCache() {
 	}
 	m.cachedDSN = renderDSNPanel(*m, w)
 	m.cachedSpacecraft = renderSpacecraftPanel(*m, w-w/3)
-	m.cachedTrajectory = renderTrajectoryPanel(*m, w-w/3)
+	m.cachedTrajectory = renderTrajectoryPanel(*m, w)
 	m.cachedCrew = renderCrewPanel(w)
 	m.cachedSW = renderSpaceWeatherPanel(*m, w)
+	m.cachedBlog = renderMissionLogPanel(*m, w)
 }
 
 func tickCmd() tea.Cmd {
@@ -188,5 +225,12 @@ func fetchSW(client *spaceweather.Client) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Fetch()
 		return swMsg{status: status, err: err}
+	}
+}
+
+func fetchBlog(client *nasablog.Client) tea.Cmd {
+	return func() tea.Msg {
+		status, err := client.Fetch()
+		return blogMsg{status: status, err: err}
 	}
 }

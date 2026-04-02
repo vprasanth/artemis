@@ -85,4 +85,30 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
+
+	// Gantt chart styles
+	ganttCompletedBar = lipgloss.NewStyle().
+				Foreground(colorGreen)
+
+	ganttActiveBar = lipgloss.NewStyle().
+			Foreground(colorPrimary).
+			Bold(true)
+
+	ganttCursorBar = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Bold(true)
+
+	ganttPendingBar = lipgloss.NewStyle().
+			Foreground(colorDim)
+
+	ganttNowMarker = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Bold(true)
+
+	// Mission log styles
+	logTimeStyle = lipgloss.NewStyle().
+			Foreground(colorCyan)
+
+	logTitleStyle = lipgloss.NewStyle().
+			Foreground(colorBright)
 )

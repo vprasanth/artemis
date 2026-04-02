@@ -1,0 +1,169 @@
+package ui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"artemis/internal/mission"
+)
+
+const ganttLabelWidth = 15
+
+func renderGanttPanel(w int) string {
+	met := mission.MET()
+	totalDur := mission.Timeline[len(mission.Timeline)-1].METOffset
+
+	barW := w - 4 - ganttLabelWidth
+	if barW < 20 {
+		barW = 20
+	}
+
+	dayLabels, dayTicks := renderDayAxis(barW, totalDur)
+	pad := strings.Repeat(" ", ganttLabelWidth)
+
+	var lines []string
+
+	// Day axis header
+	lines = append(lines,
+		pad+dimStyle.Render(dayLabels),
+		pad+dimStyle.Render(dayTicks),
+	)
+
+	// Phase rows
+	for _, phase := range mission.Phases {
+		status := mission.GetPhaseStatus(phase, met)
+		var label string
+		switch status {
+		case mission.PhaseCompleted:
+			label = completedStyle.Render(fmt.Sprintf("  %-13s", phase.ShortName))
+		case mission.PhaseActive:
+			label = currentStyle.Render(fmt.Sprintf("  %-13s", phase.ShortName))
+		default:
+			label = pendingStyle.Render(fmt.Sprintf("  %-13s", phase.ShortName))
+		}
+		bar := renderPhaseBar(phase, met, barW, totalDur)
+		lines = append(lines, label+bar)
+	}
+
+	// Day axis footer
+	lines = append(lines, pad+dimStyle.Render(dayTicks))
+
+	// NOW marker
+	nowLabel := ganttNowMarker.Render(fmt.Sprintf("  %-13s", "NOW"))
+	nowLine := renderNowMarker(met, barW, totalDur)
+	lines = append(lines, nowLabel+nowLine)
+
+	// Status line
+	phaseIdx := mission.CurrentPhase(met)
+	phaseName := mission.Phases[phaseIdx].Name
+	day := mission.MissionDay()
+	statusLine := fmt.Sprintf("  %s  %s  %s %s",
+		metStyle.Render(mission.FormatMET(met)),
+		dimStyle.Render(fmt.Sprintf("Day %d/10", day)),
+		labelStyle.Render("Phase:"),
+		currentStyle.Render(phaseName),
+	)
+	lines = append(lines, statusLine)
+
+	content := strings.Join(lines, "\n")
+	return panelStyle.Width(w - 2).Render(
+		panelTitleStyle.Render("MISSION GANTT CHART") + "\n" + content,
+	)
+}
+
+func metToCol(met time.Duration, barWidth int, totalDur time.Duration) int {
+	if met <= 0 {
+		return 0
+	}
+	if met >= totalDur {
+		return barWidth - 1
+	}
+	col := int(float64(met) / float64(totalDur) * float64(barWidth))
+	if col >= barWidth {
+		col = barWidth - 1
+	}
+	return col
+}
+
+func renderDayAxis(barWidth int, totalDur time.Duration) (string, string) {
+	dayLine := make([]byte, barWidth)
+	tickLine := make([]byte, barWidth)
+	for i := range dayLine {
+		dayLine[i] = ' '
+		tickLine[i] = ' '
+	}
+
+	for day := 0; day <= 10; day++ {
+		col := metToCol(time.Duration(day)*24*time.Hour, barWidth, totalDur)
+		if col >= barWidth {
+			col = barWidth - 1
+		}
+		tickLine[col] = '|'
+		label := fmt.Sprintf("%d", day)
+		if col+len(label) <= barWidth {
+			copy(dayLine[col:], label)
+		}
+	}
+
+	return string(dayLine), string(tickLine)
+}
+
+func renderPhaseBar(phase mission.Phase, met time.Duration, barWidth int, totalDur time.Duration) string {
+	startCol := metToCol(phase.StartMET, barWidth, totalDur)
+	endCol := metToCol(phase.EndMET, barWidth, totalDur)
+	if endCol <= startCol {
+		endCol = startCol + 1
+	}
+	if endCol > barWidth {
+		endCol = barWidth
+	}
+
+	status := mission.GetPhaseStatus(phase, met)
+
+	prefix := strings.Repeat(" ", startCol)
+	phaseWidth := endCol - startCol
+	suffix := ""
+	if barWidth-endCol > 0 {
+		suffix = strings.Repeat(" ", barWidth-endCol)
+	}
+
+	switch status {
+	case mission.PhaseCompleted:
+		return prefix + ganttCompletedBar.Render(strings.Repeat("━", phaseWidth)) + suffix
+	case mission.PhasePending:
+		return prefix + ganttPendingBar.Render(strings.Repeat("─", phaseWidth)) + suffix
+	case mission.PhaseActive:
+		nowCol := metToCol(met, barWidth, totalDur)
+		if nowCol < startCol {
+			nowCol = startCol
+		}
+		if nowCol >= endCol {
+			nowCol = endCol - 1
+		}
+
+		doneCols := nowCol - startCol
+		pendCols := endCol - nowCol - 1
+
+		var bar string
+		if doneCols > 0 {
+			bar += ganttActiveBar.Render(strings.Repeat("━", doneCols))
+		}
+		bar += ganttCursorBar.Render("▎")
+		if pendCols > 0 {
+			bar += ganttPendingBar.Render(strings.Repeat("─", pendCols))
+		}
+		return prefix + bar + suffix
+	}
+
+	return strings.Repeat(" ", barWidth)
+}
+
+func renderNowMarker(met time.Duration, barWidth int, totalDur time.Duration) string {
+	nowCol := metToCol(met, barWidth, totalDur)
+	if nowCol < 1 {
+		return ganttNowMarker.Render("▼") + strings.Repeat(" ", barWidth-1)
+	}
+	return ganttNowMarker.Render(strings.Repeat("─", nowCol)+"▼") +
+		strings.Repeat(" ", barWidth-nowCol-1)
+}

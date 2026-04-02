@@ -20,22 +20,30 @@ func (m Model) View() string {
 		w = 120
 	}
 
-	// Clock, header, and timeline always render fresh (time-sensitive, cheap)
+	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
 	clockPanel := renderClockPanel(w / 3)
-	timelinePanel := renderTimelinePanel(w / 3)
+
+	// Gantt or event timeline, toggled with 't'
+	var timelineView string
+	if m.showGantt {
+		timelineView = renderGanttPanel(w)
+	} else {
+		timelineView = renderTimelinePanel(w)
+	}
 
 	// Everything else uses pre-built cache from Update()
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, timelinePanel, m.cachedTrajectory)
-	help := helpStyle.Render("  q/esc: quit  |  DSN ~5s  Horizons ~30s  Weather ~60s")
+	help := helpStyle.Render("  q/esc: quit  t: toggle timeline  |  DSN ~5s  Horizons ~30s  Weather ~60s  Blog ~60s")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		topRow,
 		m.cachedSW,
 		m.cachedDSN,
-		bottomRow,
+		timelineView,
+		m.cachedBlog,
+		m.cachedTrajectory,
 		m.cachedCrew,
 		help,
 	)
@@ -175,12 +183,20 @@ func renderDSNPanel(m Model, w int) string {
 				}
 			}
 
-			line := fmt.Sprintf("  %s %s %-16s %s %-8s %-12s %s",
+			// Pad plain text to fixed widths, then style each column
+			dishCol := fmt.Sprintf("%-5s", dish.Name)
+			stationCol := fmt.Sprintf("%-14s", dish.Station)
+			bandCol := fmt.Sprintf("%-8s", band)
+			rateCol := fmt.Sprintf("%-10s", rate)
+			rangeCol := fmt.Sprintf("%-10s", rangeTxt)
+
+			line := fmt.Sprintf("  %s %s %s %s %s %s %s %s",
 				upArrow, downArrow,
-				valueStyle.Render(dish.Name)+" "+dimStyle.Render(dish.Station),
-				dimStyle.Render(band),
-				dimStyle.Render(rate),
-				dimStyle.Render(rangeTxt),
+				valueStyle.Render(dishCol),
+				dimStyle.Render(stationCol),
+				dimStyle.Render(bandCol),
+				dimStyle.Render(rateCol),
+				dimStyle.Render(rangeCol),
 				formatDishActivity(dish),
 			)
 			lines = append(lines, line)
@@ -203,12 +219,11 @@ func renderTimelinePanel(w int) string {
 	currentIdx := mission.CurrentEventIndex(met)
 	events := mission.Timeline
 
-	// Show a window of events around the current one
-	startIdx := currentIdx - 3
+	startIdx := currentIdx - 4
 	if startIdx < 0 {
 		startIdx = 0
 	}
-	endIdx := startIdx + 12
+	endIdx := startIdx + 14
 	if endIdx > len(events) {
 		endIdx = len(events)
 	}
@@ -233,15 +248,18 @@ func renderTimelinePanel(w int) string {
 		}
 
 		metLabel := mission.FormatMET(e.METOffset)
-		line := fmt.Sprintf("%s%s %s", prefix, style.Render(e.Label), dimStyle.Render(metLabel))
+		line := fmt.Sprintf("%s%-24s %s", prefix, style.Render(e.Label), dimStyle.Render(metLabel))
 		lines = append(lines, line)
 	}
 
 	content := strings.Join(lines, "\n")
 	return panelStyle.Width(w - 2).Render(
-		panelTitleStyle.Render("MISSION TIMELINE") + "\n" + content,
+		panelTitleStyle.Render("MISSION TIMELINE") +
+			"  " + dimStyle.Render("t: switch to gantt") + "\n" + content,
 	)
 }
+
+
 
 func renderTrajectoryPanel(m Model, w int) string {
 	earthDist := 0.0
@@ -353,14 +371,14 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 
 	s := m.swStatus
 
-	// R/S/G scale indicators
-	rScale := formatScaleIndicator("R", s.RadioBlackout.Scale, "Radio")
-	sScale := formatScaleIndicator("S", s.SolarRadiation.Scale, "Solar Rad")
-	gScale := formatScaleIndicator("G", s.GeomagStorm.Scale, "Geomag")
+	// R/S/G scale indicators with fixed-width columns
+	rScale := formatScaleIndicator("R", s.RadioBlackout.Scale, "Radio Blackout")
+	sScale := formatScaleIndicator("S", s.SolarRadiation.Scale, "Solar Radiation")
+	gScale := formatScaleIndicator("G", s.GeomagStorm.Scale, "Geomag Storm")
 
-	scales := fmt.Sprintf("  %s    %s    %s", rScale, sScale, gScale)
+	scales := fmt.Sprintf("  %s     %s     %s", rScale, sScale, gScale)
 
-	// Solar wind + magnetic field + Kp
+	// Kp index
 	kpColor := colorGreen
 	kpLabel := "Quiet"
 	switch {
@@ -375,6 +393,7 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 		kpLabel = "Active"
 	}
 
+	// Bz color
 	bzColor := colorGreen
 	if s.Bz < -5 {
 		bzColor = colorYellow
@@ -383,8 +402,7 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 		bzColor = colorRed
 	}
 
-	details := fmt.Sprintf(
-		"  %s %s  %s %s  %s %s  %s %s  %s %s",
+	details := fmt.Sprintf("  %s %-10s %s %-12s %s %-9s %s %-10s %s %s",
 		labelStyle.Render("Kp:"),
 		lipgloss.NewStyle().Bold(true).Foreground(kpColor).Render(fmt.Sprintf("%.0f %s", s.Kp, kpLabel)),
 		labelStyle.Render("Wind:"),
@@ -432,4 +450,43 @@ func formatProtonFlux(flux float64) string {
 			Render(fmt.Sprintf("%.1f pfu", flux))
 	}
 	return valueStyle.Render(fmt.Sprintf("%.2f pfu", flux))
+}
+
+func renderMissionLogPanel(m Model, w int) string {
+	if m.blogStatus == nil {
+		var content string
+		if m.blogErr != nil {
+			content = errorStyle.Render("Waiting for mission log...")
+		} else {
+			content = dimStyle.Render("Fetching mission log...")
+		}
+		return panelStyle.Width(w - 2).Render(
+			panelTitleStyle.Render("MISSION LOG") + "\n" + content,
+		)
+	}
+
+	maxTitle := w - 20
+	if maxTitle < 30 {
+		maxTitle = 30
+	}
+
+	var lines []string
+	for _, entry := range m.blogStatus.Entries {
+		timeStr := entry.Time.Format("15:04Z")
+		title := entry.Title
+		if len(title) > maxTitle {
+			title = title[:maxTitle-3] + "..."
+		}
+		line := fmt.Sprintf("  %s  %s",
+			logTimeStyle.Render(timeStr),
+			logTitleStyle.Render(title),
+		)
+		lines = append(lines, line)
+	}
+
+	content := strings.Join(lines, "\n")
+	return panelStyle.Width(w - 2).Render(
+		panelTitleStyle.Render("MISSION LOG") +
+			"  " + dimStyle.Render("blogs.nasa.gov/artemis") + "\n" + content,
+	)
 }
