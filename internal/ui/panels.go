@@ -11,42 +11,57 @@ import (
 )
 
 func (m Model) View() string {
-	if m.width == 0 {
+	if m.width == 0 || m.layout == nil {
 		return "Loading..."
 	}
 
-	w := m.width
-	if w > 120 {
-		w = 120
+	// Minimum terminal size guard.
+	if m.width < 60 || m.height < 14 {
+		msg := fmt.Sprintf(
+			"Terminal too small\n\nMinimum: 60 x 14\nCurrent: %d x %d\n\nPlease resize your terminal.",
+			m.width, m.height,
+		)
+		return lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			dimStyle.Render(msg))
 	}
+
+	w := m.layout[panelHeader].width
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
 	clockPanel := renderClockPanel(w / 3)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
 
-	// Gantt or event timeline, toggled with 't'
-	var timelineView string
-	if m.showGantt {
-		timelineView = renderGanttPanel(w)
-	} else {
-		timelineView = renderTimelinePanel(w)
+	var sections []string
+	sections = append(sections, header, topRow)
+
+	if pl := m.layout[panelSpaceWeather]; pl.visible {
+		sections = append(sections, m.cachedSW)
+	}
+	if pl := m.layout[panelDSN]; pl.visible {
+		sections = append(sections, m.cachedDSN)
+	}
+	if pl := m.layout[panelTimeline]; pl.visible {
+		sections = append(sections, m.cachedTimeline)
+	}
+	if pl := m.layout[panelMissionLog]; pl.visible {
+		sections = append(sections, m.cachedBlog)
+	}
+	if pl := m.layout[panelTrajectory]; pl.visible {
+		sections = append(sections, m.cachedTrajectory)
+	}
+	if pl := m.layout[panelCrew]; pl.visible {
+		sections = append(sections, m.cachedCrew)
 	}
 
-	// Everything else uses pre-built cache from Update()
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
-	help := helpStyle.Render("  q/esc: quit  t: toggle timeline  |  DSN ~5s  Horizons ~30s  Weather ~60s  Blog ~60s")
+	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: toggle timeline  |  %dx%d  DSN ~5s  Horizons ~30s  Weather ~60s  Blog ~60s", m.width, m.height))
+	sections = append(sections, help)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		topRow,
-		m.cachedSW,
-		m.cachedDSN,
-		timelineView,
-		m.cachedBlog,
-		m.cachedTrajectory,
-		m.cachedCrew,
-		help,
-	)
+	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	// Fill entire terminal: center horizontally, top-align vertically.
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, result)
 }
 
 func renderHeader(w int) string {
@@ -261,7 +276,7 @@ func renderTimelinePanel(w int) string {
 
 
 
-func renderTrajectoryPanel(m Model, w int) string {
+func renderTrajectoryPanel(m Model, w int, plotH int) string {
 	earthDist := 0.0
 	moonDist := 0.0
 	if m.hzState != nil {
@@ -269,7 +284,15 @@ func renderTrajectoryPanel(m Model, w int) string {
 		moonDist = m.hzState.MoonDist
 	}
 
-	plot := renderTrajectory(earthDist, moonDist)
+	plotW := w - 6
+	if plotW < 30 {
+		plotW = 30
+	}
+	if plotW > 60 {
+		plotW = 60
+	}
+
+	plot := renderTrajectory(earthDist, moonDist, plotW, plotH)
 
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("TRAJECTORY") +
@@ -452,7 +475,7 @@ func formatProtonFlux(flux float64) string {
 	return valueStyle.Render(fmt.Sprintf("%.2f pfu", flux))
 }
 
-func renderMissionLogPanel(m Model, w int) string {
+func renderMissionLogPanel(m Model, w int, maxEntries int) string {
 	if m.blogStatus == nil {
 		var content string
 		if m.blogErr != nil {
@@ -470,8 +493,13 @@ func renderMissionLogPanel(m Model, w int) string {
 		maxTitle = 30
 	}
 
+	entries := m.blogStatus.Entries
+	if maxEntries > 0 && len(entries) > maxEntries {
+		entries = entries[:maxEntries]
+	}
+
 	var lines []string
-	for _, entry := range m.blogStatus.Entries {
+	for _, entry := range entries {
 		timeStr := entry.Time.Format("15:04Z")
 		title := entry.Title
 		if len(title) > maxTitle {
@@ -490,3 +518,4 @@ func renderMissionLogPanel(m Model, w int) string {
 			"  " + dimStyle.Render("blogs.nasa.gov/artemis") + "\n" + content,
 	)
 }
+

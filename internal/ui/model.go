@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
@@ -65,6 +68,9 @@ type Model struct {
 	lastSWFetch      time.Time
 	lastBlogFetch    time.Time
 
+	// Layout computed from terminal dimensions.
+	layout map[panelID]panelLayout
+
 	// Pre-rendered panel strings, rebuilt only when data or size changes.
 	cachedDSN        string
 	cachedSpacecraft string
@@ -72,6 +78,7 @@ type Model struct {
 	cachedCrew       string
 	cachedSW         string
 	cachedBlog       string
+	cachedTimeline   string
 }
 
 func NewModel() Model {
@@ -106,16 +113,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "t":
 			m.showGantt = !m.showGantt
+			m.buildCache()
 		}
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.buildCache()
+		if msg.Width != m.width || msg.Height != m.height {
+			m.width = msg.Width
+			m.height = msg.Height
+			m.buildCache()
+		}
 
 	case tickMsg:
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
+
+		// Directly query terminal size to catch tmux pane resizes
+		// that may not trigger SIGWINCH / WindowSizeMsg.
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			if w != m.width || h != m.height {
+				m.width = w
+				m.height = h
+				m.buildCache()
+			}
+		}
 
 		now := time.Now()
 		if now.Sub(m.lastDSNFetch) > 5*time.Second && !m.dsnLoading {
@@ -185,20 +205,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // buildCache pre-renders expensive panels so View() only assembles strings.
+// Fixed-height panels are rendered and measured first, then the layout engine
+// decides which fit. Trajectory is a flex panel that expands to fill remaining space.
 func (m *Model) buildCache() {
 	if m.width == 0 {
 		return
 	}
+
 	w := m.width
-	if w > 120 {
-		w = 120
-	}
-	m.cachedDSN = renderDSNPanel(*m, w)
+
+	// Phase 1: Render fixed-height panels.
 	m.cachedSpacecraft = renderSpacecraftPanel(*m, w-w/3)
-	m.cachedTrajectory = renderTrajectoryPanel(*m, w)
-	m.cachedCrew = renderCrewPanel(w)
+	m.cachedDSN = renderDSNPanel(*m, w)
 	m.cachedSW = renderSpaceWeatherPanel(*m, w)
-	m.cachedBlog = renderMissionLogPanel(*m, w)
+	m.cachedBlog = renderMissionLogPanel(*m, w, 5)
+	m.cachedCrew = renderCrewPanel(w)
+
+	if m.showGantt {
+		m.cachedTimeline = renderGanttPanel(w)
+	} else {
+		m.cachedTimeline = renderTimelinePanel(w)
+	}
+
+	// Phase 2: Measure fixed-height panels.
+	measured := map[panelID]int{
+		panelDSN:          countLines(m.cachedDSN),
+		panelTimeline:     countLines(m.cachedTimeline),
+		panelSpaceWeather: countLines(m.cachedSW),
+		panelMissionLog:   countLines(m.cachedBlog),
+		panelCrew:         countLines(m.cachedCrew),
+	}
+
+	// Measure always-visible panels for the fixed height budget.
+	header := renderHeader(w)
+	clockPanel := renderClockPanel(w / 3)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, m.cachedSpacecraft)
+	fixedHeight := countLines(header) + countLines(topRow) + 1 // +1 for help line
+
+	// Phase 3: Layout decides which fixed panels fit; trajectory gets remaining space.
+	var trajectoryAvail int
+	m.layout, trajectoryAvail = computeLayout(w, m.height, fixedHeight, measured)
+
+	// Phase 4: Render trajectory at the allocated height (flex panel).
+	m.cachedTrajectory = ""
+	if m.layout[panelTrajectory].visible {
+		plotH := trajectoryAvail - 3 // subtract border(2) + title(1)
+		if plotH < 6 {
+			plotH = 6
+		}
+		m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
+	}
+
+	// Store effective width for View().
+	m.layout[panelHeader] = panelLayout{visible: true, height: countLines(header), width: w}
+	m.layout[panelTopRow] = panelLayout{visible: true, height: countLines(topRow), width: w}
+	m.layout[panelHelp] = panelLayout{visible: true, height: 1, width: w}
+
+	// Clear hidden panels.
+	if !m.layout[panelDSN].visible {
+		m.cachedDSN = ""
+	}
+	if !m.layout[panelSpaceWeather].visible {
+		m.cachedSW = ""
+	}
+	if !m.layout[panelTimeline].visible {
+		m.cachedTimeline = ""
+	}
+	if !m.layout[panelMissionLog].visible {
+		m.cachedBlog = ""
+	}
+	if !m.layout[panelCrew].visible {
+		m.cachedCrew = ""
+	}
 }
 
 func tickCmd() tea.Cmd {
