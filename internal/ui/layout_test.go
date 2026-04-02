@@ -90,3 +90,100 @@ func TestRenderFooterOmitsViewShortcutWhenTrajectoryHidden(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderFooterIncludesNotificationShortcut(t *testing.T) {
+	m := Model{
+		width:                72,
+		height:               24,
+		notificationsEnabled: true,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	checks := []struct {
+		width int
+		want  string
+	}{
+		{200, "n notify(on)"},
+		{72, "n(on)"},
+	}
+
+	for _, tc := range checks {
+		got := renderFooter(m, tc.width)
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("expected footer width %d to include %q, got %q", tc.width, tc.want, got)
+		}
+	}
+}
+
+func TestRenderFooterShowsDebugShortcutOnlyWhenEnabled(t *testing.T) {
+	disabled := Model{
+		width:                120,
+		height:               24,
+		notificationsEnabled: true,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+	if got := renderFooter(disabled, 120); strings.Contains(got, "N test-notify") {
+		t.Fatalf("expected footer without debug mode to omit debug shortcut, got %q", got)
+	}
+
+	enabled := disabled
+	enabled.debugKeysEnabled = true
+	if got := renderFooter(enabled, 120); !strings.Contains(got, "N test") {
+		t.Fatalf("expected footer with debug mode to include debug shortcut, got %q", got)
+	}
+}
+
+func TestRenderFooterShowsNotificationFailure(t *testing.T) {
+	m := Model{
+		width:               140,
+		height:              24,
+		startedAt:           time.Now().Add(-10 * time.Minute),
+		notificationError:   "notify failed",
+		notificationErrorAt: time.Now(),
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 140)
+	if !strings.Contains(got, "notify failed") {
+		t.Fatalf("expected footer to show notification failure, got %q", got)
+	}
+}
+
+func TestFormatFooterUptime(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "00:00:00"},
+		{2*time.Hour + 3*time.Minute + 4*time.Second, "02:03:04"},
+		{27*time.Hour + 15*time.Minute, "1d03h"},
+	}
+
+	for _, tc := range cases {
+		if got := formatFooterUptime(tc.in); got != tc.want {
+			t.Fatalf("formatFooterUptime(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRenderFooterShowsUptime(t *testing.T) {
+	m := Model{
+		width:     160,
+		height:    24,
+		startedAt: time.Now().Add(-(2*time.Hour + 3*time.Minute + 4*time.Second)),
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 160)
+	if !strings.Contains(got, "up 02:03:04") {
+		t.Fatalf("expected footer to show uptime, got %q", got)
+	}
+}

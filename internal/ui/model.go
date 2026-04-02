@@ -11,6 +11,7 @@ import (
 
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
+	"artemis/internal/mission"
 	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
 )
@@ -43,15 +44,19 @@ type blogMsg struct {
 }
 
 type openBrowserMsg struct{ err error }
+type notificationResultMsg struct{ err error }
+type notificationSender func(title, body string) tea.Cmd
 
 type Model struct {
 	width  int
 	height int
 
-	showGantt      bool   // toggle between Gantt chart and event timeline
-	showStars      bool   // toggle starfield in trajectory
-	tickCount      uint64 // monotonic frame counter for animation
-	trajectoryView int    // 0=Trajectory, 1=Orbital, 2=Instruments
+	showGantt            bool   // toggle between Gantt chart and event timeline
+	showStars            bool   // toggle starfield in trajectory
+	notificationsEnabled bool   // toggle native desktop notifications
+	debugKeysEnabled     bool   // enable debug-only keybindings
+	tickCount            uint64 // monotonic frame counter for animation
+	trajectoryView       int    // 0=Trajectory, 1=Orbital, 2=Instruments
 
 	speedHistory  []float64          // ring buffer (cap 24) for sparkline
 	positionTrail []horizons.Vector3 // ring buffer (cap 12) for orbital trail
@@ -77,11 +82,20 @@ type Model struct {
 	blogErr          error
 	blogLoading      bool
 	selectedLogEntry int
+	blogPrimed       bool
+	lastSeenBlogID   int
 
 	lastDSNFetch     time.Time
 	lastHorizonFetch time.Time
 	lastSWFetch      time.Time
 	lastBlogFetch    time.Time
+	startedAt        time.Time
+
+	phasePrimed         bool
+	lastPhaseIndex      int
+	notifier            notificationSender
+	notificationError   string
+	notificationErrorAt time.Time
 
 	// Layout computed from terminal dimensions.
 	layout map[panelID]panelLayout
@@ -97,16 +111,20 @@ type Model struct {
 
 func NewModel() Model {
 	return Model{
-		showGantt:      true,
-		showStars:      true,
-		dsnClient:      dsn.NewClient(),
-		horizonsClient: horizons.NewClient(),
-		swClient:       spaceweather.NewClient(),
-		blogClient:     nasablog.NewClient(),
-		dsnLoading:     true,
-		hzLoading:      true,
-		swLoading:      true,
-		blogLoading:    true,
+		showGantt:            true,
+		showStars:            true,
+		notificationsEnabled: true,
+		debugKeysEnabled:     os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
+		dsnClient:            dsn.NewClient(),
+		horizonsClient:       horizons.NewClient(),
+		swClient:             spaceweather.NewClient(),
+		blogClient:           nasablog.NewClient(),
+		dsnLoading:           true,
+		hzLoading:            true,
+		swLoading:            true,
+		blogLoading:          true,
+		startedAt:            time.Now(),
+		notifier:             nativeNotifyCmd,
 	}
 }
 
@@ -135,6 +153,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.showStars = !m.showStars
 			m.buildCache()
+		case "n":
+			m.notificationsEnabled = !m.notificationsEnabled
+			m.buildCache()
+		case "N":
+			if m.debugKeysEnabled {
+				return m, m.debugPhaseNotificationCmd()
+			}
 		case "v":
 			m.trajectoryView = (m.trajectoryView + 1) % 3
 			m.buildCache()
@@ -195,6 +220,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tickCount++
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
+		if m.notificationError != "" && time.Since(m.notificationErrorAt) > 5*time.Second {
+			m.notificationError = ""
+		}
+		if notifyCmd := m.handlePhaseNotification(time.Time(msg)); notifyCmd != nil {
+			cmds = append(cmds, notifyCmd)
+		}
 
 		// Directly query terminal size to catch tmux pane resizes
 		// that may not trigger SIGWINCH / WindowSizeMsg.
@@ -291,9 +322,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case blogMsg:
 		m.blogLoading = false
 		m.lastBlogFetch = time.Now()
+		var notifyCmd tea.Cmd
 		if msg.err != nil {
 			m.blogErr = msg.err
 		} else {
+			notifyCmd = m.handleBlogNotification(msg.status)
 			m.blogStatus = msg.status
 			m.blogErr = nil
 		}
@@ -310,12 +343,83 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedLogEntry = 0
 		}
 		m.buildCache()
+		return m, notifyCmd
 
 	case openBrowserMsg:
 		// Silently consume browser result.
+
+	case notificationResultMsg:
+		if msg.err != nil {
+			m.notificationError = "notify failed"
+			m.notificationErrorAt = time.Now()
+		}
 	}
 
 	return m, nil
+}
+
+func (m *Model) handleBlogNotification(status *nasablog.Status) tea.Cmd {
+	if status == nil || len(status.Entries) == 0 {
+		return nil
+	}
+
+	latest := status.Entries[0]
+	if !m.blogPrimed {
+		m.blogPrimed = true
+		m.lastSeenBlogID = latest.ID
+		return nil
+	}
+	if latest.ID == m.lastSeenBlogID {
+		return nil
+	}
+
+	m.lastSeenBlogID = latest.ID
+	if !m.notificationsEnabled {
+		return nil
+	}
+
+	return m.notificationCmd("New Mission Log Entry", latest.Title)
+}
+
+func (m *Model) handlePhaseNotification(now time.Time) tea.Cmd {
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	phaseIdx := mission.CurrentPhase(now.Sub(mission.LaunchTime))
+	if phaseIdx < 0 || phaseIdx >= len(mission.Phases) {
+		return nil
+	}
+	if !m.phasePrimed {
+		m.phasePrimed = true
+		m.lastPhaseIndex = phaseIdx
+		return nil
+	}
+	if phaseIdx <= m.lastPhaseIndex {
+		return nil
+	}
+
+	m.lastPhaseIndex = phaseIdx
+	if !m.notificationsEnabled {
+		return nil
+	}
+
+	return m.notificationCmd("Mission Phase Change", mission.Phases[phaseIdx].Name)
+}
+
+func (m Model) notificationCmd(title, body string) tea.Cmd {
+	if m.notifier != nil {
+		return m.notifier(title, body)
+	}
+	return nativeNotifyCmd(title, body)
+}
+
+func (m Model) debugPhaseNotificationCmd() tea.Cmd {
+	phaseIdx := mission.CurrentPhase(mission.MET())
+	if phaseIdx < len(mission.Phases)-1 {
+		phaseIdx++
+	}
+	return m.notificationCmd("Mission Phase Change", mission.Phases[phaseIdx].Name)
 }
 
 // buildCache pre-renders expensive panels so View() only assembles strings.

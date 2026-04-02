@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -68,9 +69,26 @@ func renderFooter(m Model, w int) string {
 	theme := ThemeName()
 	hiddenWide := hiddenPanelSummary(m, false)
 	hiddenCompact := hiddenPanelSummary(m, true)
+	notificationError := m.footerNotificationError()
+	uptimeWide, uptimeCompact := m.footerUptimeParts()
+	notifyState := "off"
+	if m.notificationsEnabled {
+		notifyState = "on"
+	}
 	viewWide := "v view"
 	viewCompact := "v view"
 	viewTight := "v"
+	notifyWide := fmt.Sprintf("n notify(%s)", notifyState)
+	notifyCompact := fmt.Sprintf("n ntfy(%s)", notifyState)
+	notifyTight := fmt.Sprintf("n(%s)", notifyState)
+	debugWide := ""
+	debugCompact := ""
+	debugTight := ""
+	if m.debugKeysEnabled {
+		debugWide = "N test-notify"
+		debugCompact = "N test"
+		debugTight = "N"
+	}
 	if m.layout != nil {
 		if pl, ok := m.layout[panelTrajectory]; ok && !pl.visible {
 			viewWide = ""
@@ -84,27 +102,37 @@ func renderFooter(m Model, w int) string {
 			"q/esc quit",
 			"t timeline",
 			viewWide,
+			notifyWide,
+			debugWide,
 			fmt.Sprintf("c theme(%s)", theme),
 			"s stars",
 			"r refresh",
 			"j/k/enter log",
+			notificationError,
 			hiddenWide,
+			uptimeWide,
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
 			"q quit",
 			"t tl",
 			viewCompact,
+			notifyCompact,
+			debugCompact,
 			fmt.Sprintf("c %s", theme),
 			"s stars",
 			"r",
 			"log nav",
+			notificationError,
 			hiddenCompact,
+			uptimeCompact,
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			joinFooterParts("q", "t", viewTight, "c", "s", "r", "log"),
+			joinFooterParts("q", "t", viewTight, notifyTight, debugTight, "c", "s", "r", "log"),
+			notificationError,
 			hiddenCompact,
+			uptimeCompact,
 			fmt.Sprintf("%s %dx%d", theme, m.width, m.height),
 		),
 		joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
@@ -118,6 +146,40 @@ func renderFooter(m Model, w int) string {
 	}
 
 	return helpStyle.Width(w).Align(lipgloss.Center).Render(candidates[len(candidates)-1])
+}
+
+func (m Model) footerNotificationError() string {
+	if m.notificationError == "" {
+		return ""
+	}
+	if time.Since(m.notificationErrorAt) > 5*time.Second {
+		return ""
+	}
+	return m.notificationError
+}
+
+func (m Model) footerUptimeParts() (string, string) {
+	if m.startedAt.IsZero() {
+		return "", ""
+	}
+	uptime := formatFooterUptime(time.Since(m.startedAt))
+	return "up " + uptime, uptime
+}
+
+func formatFooterUptime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	totalSeconds := int(d.Seconds())
+	days := totalSeconds / 86400
+	hours := (totalSeconds % 86400) / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd%02dh", days, hours)
+	}
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
 func hiddenPanelSummary(m Model, compact bool) string {
