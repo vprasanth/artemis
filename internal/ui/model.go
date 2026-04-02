@@ -128,6 +128,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.showStars = !m.showStars
 			m.buildCache()
+		case "r":
+			var cmds []tea.Cmd
+			if !m.dsnLoading {
+				m.dsnLoading = true
+				cmds = append(cmds, fetchDSN(m.dsnClient))
+			}
+			if !m.hzLoading {
+				m.hzLoading = true
+				cmds = append(cmds, fetchHorizons(m.horizonsClient))
+			}
+			if !m.swLoading {
+				m.swLoading = true
+				cmds = append(cmds, fetchSW(m.swClient))
+			}
+			if !m.blogLoading {
+				m.blogLoading = true
+				cmds = append(cmds, fetchBlog(m.blogClient))
+			}
+			return m, tea.Batch(cmds...)
 		case "tab", "j":
 			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
 				max := len(m.blogStatus.Entries) - 1
@@ -189,19 +208,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		now := time.Now()
-		if now.Sub(m.lastDSNFetch) > 5*time.Second && !m.dsnLoading {
+		if now.Sub(m.lastDSNFetch) > 30*time.Second && !m.dsnLoading {
 			m.dsnLoading = true
 			cmds = append(cmds, fetchDSN(m.dsnClient))
 		}
-		if now.Sub(m.lastHorizonFetch) > 30*time.Second && !m.hzLoading {
+		if now.Sub(m.lastHorizonFetch) > 5*time.Minute && !m.hzLoading {
 			m.hzLoading = true
 			cmds = append(cmds, fetchHorizons(m.horizonsClient))
 		}
-		if now.Sub(m.lastSWFetch) > 60*time.Second && !m.swLoading {
+		if now.Sub(m.lastSWFetch) > 5*time.Minute && !m.swLoading {
 			m.swLoading = true
 			cmds = append(cmds, fetchSW(m.swClient))
 		}
-		if now.Sub(m.lastBlogFetch) > 60*time.Second && !m.blogLoading {
+		if now.Sub(m.lastBlogFetch) > 60*time.Minute && !m.blogLoading {
 			m.blogLoading = true
 			cmds = append(cmds, fetchBlog(m.blogClient))
 		}
@@ -346,7 +365,7 @@ func (m *Model) buildCache() {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

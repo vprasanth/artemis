@@ -55,7 +55,7 @@ func (m Model) View() string {
 		sections = append(sections, m.cachedCrew)
 	}
 
-	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  j/k/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
+	help := helpStyle.Render(fmt.Sprintf("  q/esc: quit  t: timeline  c: theme (%s)  s: stars  r: refresh  j/k/enter: log  |  %dx%d", ThemeName(), m.width, m.height))
 	sections = append(sections, help)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
