@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 LDFLAGS  = -X main.version=$(VERSION)
 BINARY   = artemis
 
-.PHONY: build run clean release
+.PHONY: build run clean tag release
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./main.go
@@ -12,6 +12,13 @@ run: build
 
 clean:
 	rm -f $(BINARY) $(BINARY)-*
+
+tag:
+ifndef TAG
+	$(error Usage: make tag TAG=v0.3.0)
+endif
+	git tag -a $(TAG) -m "$(TAG)"
+	git push origin $(TAG)
 
 release: clean
 	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-arm64  ./main.go
