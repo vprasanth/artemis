@@ -16,6 +16,7 @@ var (
 	compassStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 	compassLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#888888"))
 	scopeRingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+	instTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4FC3F7"))
 )
 
 // renderInstrumentPanel renders the spacecraft instrument panel HUD.
@@ -27,8 +28,7 @@ func renderInstrumentPanel(m Model, w, plotH int) string {
 
 	plot := renderInstruments(m, plotW, plotH)
 
-	legend := dimStyle.Render("Velocity  Range  Bearing  Signal  Radiation  Proximity") +
-		"  " + dimStyle.Render("v: switch view")
+	legend := dimStyle.Render("v: switch view")
 
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("INSTRUMENTS") + "  " + legend + "\n" + plot,
@@ -36,95 +36,37 @@ func renderInstrumentPanel(m Model, w, plotH int) string {
 }
 
 func renderInstruments(m Model, plotW, plotH int) string {
-	// Divide canvas into 2 rows x 3 columns of instrument groups.
-	// Each group renders into a sub-canvas that we then blit onto the main canvas.
-
-	canvas := make([][]string, plotH)
-	for i := range canvas {
-		canvas[i] = make([]string, plotW)
-		for j := range canvas[i] {
-			canvas[i][j] = " "
-		}
-	}
-
-	// Column widths: velocity=~35%, range=~30%, bearing=~35%
-	col1W := plotW * 35 / 100
+	// Column widths for the 2x3 grid.
+	col1W := plotW * 38 / 100
 	col2W := plotW * 30 / 100
 	col3W := plotW - col1W - col2W
 
 	topH := plotH / 2
 	botH := plotH - topH
 
-	// --- TOP ROW ---
+	// Each instrument returns a multi-line string at a fixed size.
+	// Use lipgloss to compose into a grid.
 
-	// Top-left: Velocity gauge
-	velLines := renderVelocityGauge(m, col1W, topH)
-	blitLines(canvas, velLines, 0, 0, plotW)
+	vel := renderVelocityGauge(m, col1W, topH)
+	rng := renderRangeFinder(m, col2W, topH)
+	bearing := renderBearingDisplay(m, col3W, topH)
 
-	// Top-center: Range finder
-	rangeLines := renderRangeFinder(m, col2W, topH)
-	blitLines(canvas, rangeLines, col1W, 0, plotW)
+	sig := renderSignalHealth(m, col1W, botH)
+	rad := renderRadiation(m, col2W, botH)
+	prox := renderProximityScope(m, col3W, botH)
 
-	// Top-right: Bearing compass
-	bearingLines := renderBearingDisplay(m, col3W, topH)
-	blitLines(canvas, bearingLines, col1W+col2W, 0, plotW)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, vel, rng, bearing)
+	botRow := lipgloss.JoinHorizontal(lipgloss.Top, sig, rad, prox)
 
-	// --- BOTTOM ROW ---
-
-	// Bottom-left: Signal health
-	signalLines := renderSignalHealth(m, col1W, botH)
-	blitLines(canvas, signalLines, 0, topH, plotW)
-
-	// Bottom-center: Radiation
-	radLines := renderRadiation(m, col2W, botH)
-	blitLines(canvas, radLines, col1W, topH, plotW)
-
-	// Bottom-right: Proximity scope
-	proxLines := renderProximityScope(m, col3W, botH)
-	blitLines(canvas, proxLines, col1W+col2W, topH, plotW)
-
-	// Render canvas to string.
-	var sb strings.Builder
-	sb.Grow(plotW * plotH * 10)
-	for i, row := range canvas {
-		if i > 0 {
-			sb.WriteByte('\n')
-		}
-		for _, cell := range row {
-			sb.WriteString(cell)
-		}
-	}
-	return sb.String()
-}
-
-// blitLines writes pre-rendered lines onto the canvas at the given offset.
-func blitLines(canvas [][]string, lines []string, offX, offY int, plotW int) {
-	for i, line := range lines {
-		y := offY + i
-		if y >= len(canvas) {
-			break
-		}
-		// Each character in the line goes to one cell.
-		// Since lines may contain ANSI sequences, we render cell-by-cell.
-		x := offX
-		for _, ch := range line {
-			if x >= plotW {
-				break
-			}
-			if x >= 0 && x < len(canvas[y]) {
-				canvas[y][x] = string(ch)
-			}
-			x++
-		}
-	}
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, botRow)
 }
 
 // --- Velocity Gauge ---
 
-func renderVelocityGauge(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderVelocityGauge(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 3 || w < 10 {
-		return lines
+		return style.Render("")
 	}
 
 	speed := 0.0
@@ -132,48 +74,46 @@ func renderVelocityGauge(m Model, w, h int) []string {
 		speed = m.hzState.Speed
 	}
 
+	var lines []string
+
 	// Title
-	lines[0] = gaugeFilledStyle.Render("VELOCITY") + " " + dimStyle.Render("km/s")
+	lines = append(lines, instTitleStyle.Render("VELOCITY")+" "+dimStyle.Render("km/s"))
 
 	// Horizontal bar gauge (0–2 km/s)
-	if h > 1 {
-		barW := w - 2
-		if barW < 5 {
-			barW = 5
-		}
-		lines[1] = renderHBar(speed, 2.0, barW, gaugeFilledStyle, gaugeEmptyStyle)
+	barW := w - 4
+	if barW < 5 {
+		barW = 5
 	}
+	lines = append(lines, renderHBar(speed, 2.0, barW, gaugeFilledStyle, gaugeEmptyStyle))
 
 	// Speed value
-	if h > 2 {
-		lines[2] = gaugeFilledStyle.Render(fmt.Sprintf("%.3f", speed)) + " " + dimStyle.Render("km/s") +
-			"  " + dimStyle.Render(fmt.Sprintf("(%.0f km/h)", speed*3600))
-	}
+	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("%.3f", speed))+" "+dimStyle.Render("km/s")+
+		"  "+dimStyle.Render(fmt.Sprintf("(%.0f km/h)", speed*3600)))
+
+	// Blank separator
+	lines = append(lines, "")
 
 	// Sparkline from speed history
-	if h > 4 && len(m.speedHistory) > 1 {
-		sparkW := w - 2
+	if len(m.speedHistory) > 1 {
+		sparkW := w - 4
 		if sparkW > len(m.speedHistory) {
 			sparkW = len(m.speedHistory)
 		}
-		lines[4] = sparklineStyle.Render(renderSparkline(m.speedHistory, sparkW))
+		lines = append(lines, sparklineStyle.Render(renderSparkline(m.speedHistory, sparkW)))
 
-		// Min/Avg/Max
-		if h > 5 {
-			mn, avg, mx := minAvgMax(m.speedHistory)
-			lines[5] = dimStyle.Render(fmt.Sprintf("min:%.3f avg:%.3f max:%.3f", mn, avg, mx))
-		}
+		mn, avg, mx := minAvgMax(m.speedHistory)
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("min:%.3f avg:%.3f max:%.3f", mn, avg, mx)))
 	}
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Range Finder ---
 
-func renderRangeFinder(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderRangeFinder(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 3 || w < 10 {
-		return lines
+		return style.Render("")
 	}
 
 	earthDist := 0.0
@@ -183,66 +123,46 @@ func renderRangeFinder(m Model, w, h int) []string {
 		moonDist = m.hzState.MoonDist
 	}
 
-	lines[0] = gaugeFilledStyle.Render("RANGE") + " " + dimStyle.Render("km")
+	var lines []string
 
-	// Dual vertical bars rendered horizontally
-	barH := h - 3
-	if barH < 2 {
-		barH = 2
-	}
+	lines = append(lines, instTitleStyle.Render("RANGE")+" "+dimStyle.Render("km"))
 
-	// Earth bar (max ~450,000 km) and Moon bar side by side
 	maxRange := 450000.0
-	earthFill := earthDist / maxRange
-	moonFill := moonDist / maxRange
-	if earthFill > 1 {
-		earthFill = 1
-	}
-	if moonFill > 1 {
-		moonFill = 1
-	}
-
-	barW := (w - 6) / 2
+	barW := w - 6
 	if barW < 3 {
 		barW = 3
 	}
 
-	// Render as two horizontal bars
-	if h > 1 {
-		lines[1] = earthGlyphStyle.Render("E ") + renderHBar(earthDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle)
-	}
-	if h > 2 {
-		lines[2] = dimStyle.Render("  ") + dimStyle.Render(formatCompactDist(earthDist))
-	}
-	if h > 3 {
-		lines[3] = moonGlyphStyle.Render("M ") + renderHBar(moonDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle)
-	}
-	if h > 4 {
-		lines[4] = dimStyle.Render("  ") + dimStyle.Render(formatCompactDist(moonDist))
-	}
+	// Earth distance bar
+	lines = append(lines, earthGlyphStyle.Render("E ")+renderHBar(earthDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle))
+	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(earthDist)))
+
+	// Moon distance bar
+	lines = append(lines, moonGlyphStyle.Render("M ")+renderHBar(moonDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle))
+	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(moonDist)))
 
 	// Closing rate indicator
-	if h > 5 && len(m.speedHistory) >= 2 {
+	if len(m.speedHistory) >= 2 {
 		latest := m.speedHistory[len(m.speedHistory)-1]
 		prev := m.speedHistory[len(m.speedHistory)-2]
-		arrow := "─"
+		arrow := dimStyle.Render("─")
 		if latest > prev {
 			arrow = gaugeFilledStyle.Render("▲")
 		} else if latest < prev {
 			arrow = gaugeFilledStyle.Render("▼")
 		}
-		lines[5] = dimStyle.Render("rate ") + arrow
+		lines = append(lines, dimStyle.Render("rate ")+arrow)
 	}
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Bearing Display ---
 
-func renderBearingDisplay(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderBearingDisplay(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 3 || w < 8 {
-		return lines
+		return style.Render("")
 	}
 
 	bearing := 0.0
@@ -253,84 +173,78 @@ func renderBearingDisplay(m Model, w, h int) []string {
 		}
 	}
 
-	lines[0] = gaugeFilledStyle.Render("BEARING") + " " + dimStyle.Render("ecliptic")
+	var lines []string
+	lines = append(lines, instTitleStyle.Render("BEARING")+" "+dimStyle.Render("ecliptic"))
 
-	// Compass rose
-	radius := h/2 - 1
+	// Compass rose rendered into a [][]string canvas, then joined.
+	radius := (h - 3) / 2
 	if radius < 2 {
 		radius = 2
 	}
-	if radius > w/4-1 {
-		radius = w/4 - 1
+	maxR := (w - 2) / 4
+	if maxR < 2 {
+		maxR = 2
+	}
+	if radius > maxR {
+		radius = maxR
 	}
 
 	rose := renderCompassRose(bearing, radius)
-	for i, row := range rose {
-		y := 1 + i
-		if y >= h {
-			break
-		}
-		lines[y] = strings.Join(row, "")
+	for _, row := range rose {
+		lines = append(lines, joinCanvasRow(row))
 	}
 
-	// Heading value at bottom
-	if h > 2+len(rose) {
-		lines[2+len(rose)] = gaugeFilledStyle.Render(fmt.Sprintf("HDG %.0f°", bearing))
-	}
+	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("HDG %.0f°", bearing)))
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Signal Health ---
 
-func renderSignalHealth(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderSignalHealth(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 2 || w < 10 {
-		return lines
+		return style.Render("")
 	}
 
-	lines[0] = gaugeFilledStyle.Render("SIGNAL") + " " + dimStyle.Render("health")
+	var lines []string
+
+	lines = append(lines, instTitleStyle.Render("SIGNAL")+" "+dimStyle.Render("health"))
 
 	// AOS/LOS indicator
 	isOccluded := false
 	if m.hzState != nil {
 		isOccluded = m.hzState.IsOccluded()
 	}
-	if h > 1 {
-		if isOccluded {
-			lines[1] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF1744")).Render("LOS") +
-				" " + dimStyle.Render("loss of signal")
-		} else {
-			lines[1] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4CAF50")).Render("AOS") +
-				" " + dimStyle.Render("signal acquired")
-		}
+	if isOccluded {
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF1744")).Render("LOS")+
+			" "+dimStyle.Render("loss of signal"))
+	} else {
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4CAF50")).Render("AOS")+
+			" "+dimStyle.Render("signal acquired"))
 	}
 
 	// Active DSN dish
-	if h > 2 {
-		dish := "---"
-		if m.dsnStatus != nil && len(m.dsnStatus.Dishes) > 0 {
-			dish = m.dsnStatus.Dishes[0].Name + " " + m.dsnStatus.Dishes[0].Station
-		}
-		lines[2] = dimStyle.Render("DSN: ") + dimStyle.Render(dish)
+	dish := "---"
+	if m.dsnStatus != nil && len(m.dsnStatus.Dishes) > 0 {
+		dish = m.dsnStatus.Dishes[0].Name + " " + m.dsnStatus.Dishes[0].Station
 	}
+	lines = append(lines, dimStyle.Render("DSN: ")+dimStyle.Render(dish))
 
 	// RTLT bar
-	if h > 3 {
-		rtlt := 0.0
-		if m.dsnStatus != nil && m.dsnStatus.RTLT > 0 {
-			rtlt = m.dsnStatus.RTLT
-		}
-		barW := w - 12
-		if barW < 5 {
-			barW = 5
-		}
-		lines[3] = dimStyle.Render("RTLT ") + renderHBar(rtlt, 10.0, barW, gaugeFilledStyle, gaugeEmptyStyle) +
-			" " + dimStyle.Render(fmt.Sprintf("%.1fs", rtlt))
+	rtlt := 0.0
+	if m.dsnStatus != nil && m.dsnStatus.RTLT > 0 {
+		rtlt = m.dsnStatus.RTLT
 	}
+	barW := w - 14
+	if barW < 5 {
+		barW = 5
+	}
+	lines = append(lines, dimStyle.Render("RTLT ")+renderHBar(rtlt, 10.0, barW, gaugeFilledStyle, gaugeEmptyStyle)+
+		" "+dimStyle.Render(fmt.Sprintf("%.1fs", rtlt)))
 
 	// Data rate
-	if h > 4 && m.dsnStatus != nil && len(m.dsnStatus.Dishes) > 0 {
+	if m.dsnStatus != nil && len(m.dsnStatus.Dishes) > 0 {
 		rate := 0.0
 		for _, ds := range m.dsnStatus.Dishes[0].DownSignals {
 			if ds.Active && ds.DataRate > 0 {
@@ -339,24 +253,28 @@ func renderSignalHealth(m Model, w, h int) []string {
 			}
 		}
 		if rate > 0 {
-			lines[4] = dimStyle.Render("Rate: ") + dimStyle.Render(formatDataRate(rate))
+			lines = append(lines, dimStyle.Render("Rate: ")+dimStyle.Render(formatDataRate(rate)))
 		} else {
-			lines[4] = dimStyle.Render("Rate: ---")
+			lines = append(lines, dimStyle.Render("Rate: ---"))
 		}
+	} else {
+		lines = append(lines, dimStyle.Render("Rate: ---"))
 	}
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Radiation ---
 
-func renderRadiation(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderRadiation(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 2 || w < 10 {
-		return lines
+		return style.Render("")
 	}
 
-	lines[0] = gaugeFilledStyle.Render("RADIATION") + " " + dimStyle.Render("env")
+	var lines []string
+
+	lines = append(lines, instTitleStyle.Render("RADIATION")+" "+dimStyle.Render("env"))
 
 	kp := 0.0
 	protonFlux := 0.0
@@ -368,83 +286,87 @@ func renderRadiation(m Model, w, h int) []string {
 	}
 
 	// Kp bar gauge 0–9
-	if h > 1 {
-		barW := w - 8
-		if barW < 5 {
-			barW = 5
-		}
-		kpStyle := gaugeFilledStyle
-		if kp >= 7 {
-			kpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
-		} else if kp >= 5 {
-			kpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
-		}
-		lines[1] = dimStyle.Render("Kp ") + renderHBar(kp, 9.0, barW, kpStyle, gaugeEmptyStyle) +
-			" " + kpStyle.Render(fmt.Sprintf("%.0f", kp))
+	barW := w - 10
+	if barW < 5 {
+		barW = 5
 	}
+	kpStyle := gaugeFilledStyle
+	if kp >= 7 {
+		kpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
+	} else if kp >= 5 {
+		kpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
+	}
+	lines = append(lines, dimStyle.Render("Kp ")+renderHBar(kp, 9.0, barW, kpStyle, gaugeEmptyStyle)+
+		" "+kpStyle.Render(fmt.Sprintf("%.0f", kp)))
 
 	// Proton flux level
-	if h > 2 {
-		pStyle := dimStyle
-		if protonFlux >= 10 {
-			pStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
-		} else if protonFlux >= 1 {
-			pStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
-		}
-		lines[2] = dimStyle.Render("p+  ") + pStyle.Render(fmt.Sprintf("%.2f pfu", protonFlux))
+	pStyle := dimStyle
+	if protonFlux >= 10 {
+		pStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
+	} else if protonFlux >= 1 {
+		pStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
 	}
+	lines = append(lines, dimStyle.Render("p+  ")+pStyle.Render(fmt.Sprintf("%.2f pfu", protonFlux)))
 
-	// Bz with direction
-	if h > 3 {
-		bzDir := "─"
-		bzStyle := dimStyle
-		if bz < -5 {
-			bzDir = "▼S"
-			bzStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
-		} else if bz < -10 {
-			bzDir = "▼S"
-			bzStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
-		} else if bz > 5 {
-			bzDir = "▲N"
-		}
-		lines[3] = dimStyle.Render("Bz  ") + bzStyle.Render(fmt.Sprintf("%.1f nT ", bz)) + dimStyle.Render(bzDir)
+	// Bz with direction — check more severe threshold first
+	bzDir := "─"
+	bzStyle := dimStyle
+	if bz < -10 {
+		bzDir = "▼S"
+		bzStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF5350"))
+	} else if bz < -5 {
+		bzDir = "▼S"
+		bzStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFF176"))
+	} else if bz > 5 {
+		bzDir = "▲N"
 	}
+	lines = append(lines, dimStyle.Render("Bz  ")+bzStyle.Render(fmt.Sprintf("%.1f nT ", bz))+dimStyle.Render(bzDir))
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Proximity Scope ---
 
-func renderProximityScope(m Model, w, h int) []string {
-	lines := make([]string, h)
+func renderProximityScope(m Model, w, h int) string {
+	style := lipgloss.NewStyle().Width(w).Height(h)
 	if h < 3 || w < 8 {
-		return lines
+		return style.Render("")
 	}
 
-	lines[0] = gaugeFilledStyle.Render("PROXIMITY")
+	var lines []string
+	lines = append(lines, instTitleStyle.Render("PROXIMITY"))
 
 	// Radar-style sub-canvas
-	radius := h/2 - 1
+	radius := (h - 2) / 2
 	if radius < 2 {
 		radius = 2
 	}
-	if radius > w/2-2 {
-		radius = w/2 - 2
+	maxR := (w - 2) / 4
+	if maxR < 2 {
+		maxR = 2
+	}
+	if radius > maxR {
+		radius = maxR
 	}
 
-	scope := renderProximityScopeRings(m, radius)
-	for i, row := range scope {
-		y := 1 + i
-		if y >= h {
-			break
-		}
-		lines[y] = strings.Join(row, "")
+	scope := renderProximityScopeCanvas(m, radius)
+	for _, row := range scope {
+		lines = append(lines, joinCanvasRow(row))
 	}
 
-	return lines
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Helper Functions ---
+
+// joinCanvasRow joins a []string canvas row where each cell is already styled.
+func joinCanvasRow(row []string) string {
+	var sb strings.Builder
+	for _, cell := range row {
+		sb.WriteString(cell)
+	}
+	return sb.String()
+}
 
 // renderSparkline generates a sparkline string from data using block characters.
 func renderSparkline(data []float64, width int) string {
@@ -454,7 +376,6 @@ func renderSparkline(data []float64, width int) string {
 
 	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-	// Use only the most recent 'width' entries.
 	start := 0
 	if len(data) > width {
 		start = len(data) - width
@@ -507,10 +428,9 @@ func renderHBar(value, max float64, width int, filled, empty lipgloss.Style) str
 	return filled.Render(strings.Repeat("▓", fillW)) + empty.Render(strings.Repeat("░", emptyW))
 }
 
-// renderCompassRose renders a small compass sub-canvas.
+// renderCompassRose renders a small compass into a [][]string canvas.
 func renderCompassRose(bearing float64, radius int) [][]string {
 	size := radius*2 + 1
-	// Width doubled for aspect ratio
 	widthSize := radius*4 + 1
 	rose := make([][]string, size)
 	for i := range rose {
@@ -524,8 +444,12 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 	cy := radius
 
 	// Draw circle
-	for i := 0; i < 32; i++ {
-		angle := 2.0 * math.Pi * float64(i) / 32.0
+	steps := 32
+	if radius > 3 {
+		steps = 48
+	}
+	for i := 0; i < steps; i++ {
+		angle := 2.0 * math.Pi * float64(i) / float64(steps)
 		x := cx + int(math.Round(float64(radius)*2.0*math.Cos(angle)))
 		y := cy + int(math.Round(float64(radius)*math.Sin(angle)))
 		if x >= 0 && x < widthSize && y >= 0 && y < size {
@@ -547,7 +471,7 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 		rose[cy][cx+radius*2] = compassLabelStyle.Render("E")
 	}
 
-	// Heading indicator
+	// Heading indicator (bearing measured from N clockwise, so offset by -π/2)
 	bearingRad := bearing * math.Pi / 180.0
 	hx := cx + int(math.Round(float64(radius-1)*2.0*math.Cos(bearingRad-math.Pi/2)))
 	hy := cy + int(math.Round(float64(radius-1)*math.Sin(bearingRad-math.Pi/2)))
@@ -561,8 +485,8 @@ func renderCompassRose(bearing float64, radius int) [][]string {
 	return rose
 }
 
-// renderProximityScopeRings renders radar-style rings centered on spacecraft with Moon plotted.
-func renderProximityScopeRings(m Model, radius int) [][]string {
+// renderProximityScopeCanvas renders radar-style rings with Moon plotted.
+func renderProximityScopeCanvas(m Model, radius int) [][]string {
 	size := radius*2 + 1
 	widthSize := radius*4 + 1
 	scope := make([][]string, size)
@@ -576,10 +500,14 @@ func renderProximityScopeRings(m Model, radius int) [][]string {
 	cx := widthSize / 2
 	cy := radius
 
-	// Draw concentric rings
+	// Draw concentric rings (every other radius for less clutter)
 	for r := 1; r <= radius; r++ {
-		for i := 0; i < 24; i++ {
-			angle := 2.0 * math.Pi * float64(i) / 24.0
+		steps := 24
+		if r > 2 {
+			steps = 36
+		}
+		for i := 0; i < steps; i++ {
+			angle := 2.0 * math.Pi * float64(i) / float64(steps)
 			x := cx + int(math.Round(float64(r)*2.0*math.Cos(angle)))
 			y := cy + int(math.Round(float64(r)*math.Sin(angle)))
 			if x >= 0 && x < widthSize && y >= 0 && y < size {
@@ -606,7 +534,6 @@ func renderProximityScopeRings(m Model, radius int) [][]string {
 	// Plot Moon at relative bearing/distance
 	if m.hzState != nil && m.hzState.MoonDist > 0 {
 		moonBearing := math.Atan2(m.hzState.MoonPosition.Y, m.hzState.MoonPosition.X)
-		// Normalize distance: full radius = 500,000 km
 		normDist := m.hzState.MoonDist / 500000.0
 		if normDist > 1 {
 			normDist = 1
