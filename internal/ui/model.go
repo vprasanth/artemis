@@ -16,6 +16,11 @@ import (
 	"artemis/internal/spaceweather"
 )
 
+const (
+	maxSpeedHistory   = 24
+	maxPositionTrail  = 12
+)
+
 type tickMsg time.Time
 
 type dsnMsg struct {
@@ -44,9 +49,13 @@ type Model struct {
 	width  int
 	height int
 
-	showGantt bool   // toggle between Gantt chart and event timeline
-	showStars bool   // toggle starfield in trajectory
-	tickCount uint64 // monotonic frame counter for animation
+	showGantt      bool   // toggle between Gantt chart and event timeline
+	showStars      bool   // toggle starfield in trajectory
+	tickCount      uint64 // monotonic frame counter for animation
+	trajectoryView int    // 0=Trajectory, 1=Orbital, 2=Instruments
+
+	speedHistory  []float64          // ring buffer (cap 24) for sparkline
+	positionTrail []horizons.Vector3 // ring buffer (cap 12) for orbital trail
 
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
@@ -128,6 +137,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.showStars = !m.showStars
 			m.buildCache()
+		case "v":
+			m.trajectoryView = (m.trajectoryView + 1) % 3
+			m.buildCache()
 		case "r":
 			var cmds []tea.Cmd
 			if !m.dsnLoading {
@@ -203,7 +215,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if plotH < 6 {
 					plotH = 6
 				}
-				m.cachedTrajectory = renderTrajectoryPanel(m, m.width, plotH)
+				switch m.trajectoryView {
+				case 1:
+					m.cachedTrajectory = renderOrbitalPanel(m, m.width, plotH)
+				case 2:
+					m.cachedTrajectory = renderInstrumentPanel(m, m.width, plotH)
+				default:
+					m.cachedTrajectory = renderTrajectoryPanel(m, m.width, plotH)
+				}
 			}
 		}
 
@@ -245,6 +264,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.hzState = msg.state
 			m.hzErr = nil
+
+			// Append to speed history ring buffer.
+			m.speedHistory = append(m.speedHistory, msg.state.Speed)
+			if len(m.speedHistory) > maxSpeedHistory {
+				m.speedHistory = m.speedHistory[len(m.speedHistory)-maxSpeedHistory:]
+			}
+
+			// Append to position trail ring buffer.
+			m.positionTrail = append(m.positionTrail, msg.state.Position)
+			if len(m.positionTrail) > maxPositionTrail {
+				m.positionTrail = m.positionTrail[len(m.positionTrail)-maxPositionTrail:]
+			}
 		}
 		m.buildCache()
 
@@ -338,7 +369,14 @@ func (m *Model) buildCache() {
 		if plotH < 6 {
 			plotH = 6
 		}
-		m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
+		switch m.trajectoryView {
+		case 1:
+			m.cachedTrajectory = renderOrbitalPanel(*m, w, plotH)
+		case 2:
+			m.cachedTrajectory = renderInstrumentPanel(*m, w, plotH)
+		default:
+			m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
+		}
 	}
 
 	// Store effective width for View().
