@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.0
+
+- Hide footer view shortcut when visualization panel is hidden
+- Refine TUI layout sizing and narrow-screen behavior
+- Add sensitive file patterns to .gitignore
+- Update screenshot
+- Add changelog target to Makefile
+
 ## v0.5.0
 
 ### Added
