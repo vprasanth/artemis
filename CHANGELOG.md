@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.0
+
+- update makefile with release-prep comamnd
+- Add ops views and in-app mission log reader
+- Add runtime unit toggle for dashboard telemetry
+- Fix mission timing displays and trajectory context
+- Improve visualization telemetry and fullscreen mode
+- Clean up trajectory labels and distance sourcing
+- Align trajectory visuals with live Horizons data
+- Add derived spacecraft state telemetry
+- Add TUI notifications and footer runtime status
+- Document release workflow and changelog tooling
+
 ## Unreleased
 
 ### Added
