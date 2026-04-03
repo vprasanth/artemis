@@ -26,7 +26,7 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 	}
 
 	// Layer 1: Stars (background). When animation is off, stars are static.
-	if m.showStars {
+	if m.visualEffects.starsEnabled() {
 		placeStars(canvas, plotW, plotH, m.tickCount)
 	} else {
 		placeStars(canvas, plotW, plotH, 0)

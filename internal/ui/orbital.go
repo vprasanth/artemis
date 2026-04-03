@@ -38,7 +38,7 @@ func renderOrbitalMap(m Model, plotW, plotH int) string {
 	}
 
 	// Layer 1: Stars background.
-	if m.showStars {
+	if m.visualEffects.starsEnabled() {
 		placeStars(canvas, plotW, plotH, m.tickCount)
 	} else {
 		placeStars(canvas, plotW, plotH, 0)
