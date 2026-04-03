@@ -32,29 +32,25 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 
 	frame := buildTrajectoryFrame(m.hzState, m.positionTrail, plotW, plotH)
 
-	// Layer 2: Earth-Moon reference line.
-	drawReferenceLine(canvas, frame.earthX+2, frame.moonX-2, frame.centerY, plotW)
-
-	// Layer 3: Recent trail using live Horizons positions.
+	// Layer 2: Recent trail using live Horizons positions.
 	plotTrail(canvas, frame, m.positionTrail, m.hzState, plotW, plotH)
 
-	// Layer 4: Earth and Moon glyphs (overwrite path).
+	// Layer 3: Earth and Moon glyphs (overwrite path).
 	placeGlyph(canvas, frame.earthX, frame.centerY, plotW, "E", "(", ")", earthGlyphStyle)
 	placeGlyph(canvas, frame.moonX, frame.centerY, plotW, "M", "[", "]", moonGlyphStyle)
 
-	// Layer 5: Distance labels.
+	// Layer 4: Distance labels.
 	if plotH >= 10 {
-		earthDist := 0.0
+		earthDist := effectiveEarthDist(m)
 		moonDist := 0.0
 		if m.hzState != nil {
-			earthDist = m.hzState.EarthDist
 			moonDist = m.hzState.MoonDist
 		}
 		placeLabel(canvas, frame.earthX, frame.centerY+2, earthDist, plotW, plotH)
 		placeLabel(canvas, frame.moonX, frame.centerY-2, moonDist, plotW, plotH)
 	}
 
-	// Layer 6: Spacecraft (highest priority, pulsing).
+	// Layer 5: Spacecraft (highest priority, pulsing).
 	if m.hzState != nil {
 		scPoint, ok := frame.project(m.hzState.Position)
 		if ok {
@@ -62,7 +58,7 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 		}
 	}
 
-	// Layer 7: Legend (bottom-right).
+	// Layer 6: Legend (bottom-right).
 	if plotW >= 40 && plotH >= 8 {
 		placeLegend(canvas, plotW, plotH)
 	}
@@ -182,23 +178,6 @@ func plotTrail(canvas [][]string, frame trajectoryFrame, trail []horizons.Vector
 	}
 }
 
-func drawReferenceLine(canvas [][]string, startX, endX, y, plotW int) {
-	if y < 0 || y >= len(canvas) {
-		return
-	}
-	if startX < 0 {
-		startX = 0
-	}
-	if endX > plotW {
-		endX = plotW
-	}
-	for x := startX; x < endX; x++ {
-		if canvas[y][x] == " " {
-			canvas[y][x] = scaleRingStyle.Render("─")
-		}
-	}
-}
-
 func drawTrailSegment(canvas [][]string, x0, y0, x1, y1, plotW, plotH int, style lipgloss.Style, ch string) {
 	steps := maxInt(absInt(x1-x0), absInt(y1-y0))
 	if steps == 0 {
@@ -314,15 +293,12 @@ func placeLabel(canvas [][]string, cx, cy int, dist float64, plotW, plotH int) {
 
 func formatCompactDist(km float64) string {
 	if km >= 1e6 {
-		return fmt.Sprintf("%.1fMkm", km/1e6)
-	}
-	if km >= 1e4 {
-		return fmt.Sprintf("%.0fkkm", km/1e3)
+		return fmt.Sprintf("%.1fM km", km/1e6)
 	}
 	if km >= 1000 {
-		return fmt.Sprintf("%.0fkm", km)
+		return fmt.Sprintf("%.0fk km", km/1e3)
 	}
-	return fmt.Sprintf("%.0fkm", km)
+	return fmt.Sprintf("%.0f km", km)
 }
 
 func placeLegend(canvas [][]string, plotW, plotH int) {

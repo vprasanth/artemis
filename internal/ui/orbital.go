@@ -200,7 +200,7 @@ func buildOrbitalInfo(m Model, moonAngle float64) string {
 	earthDist := "---"
 	moonDist := "---"
 	if m.hzState != nil {
-		earthDist = formatCompactDist(m.hzState.EarthDist)
+		earthDist = formatCompactDist(effectiveEarthDist(m))
 		moonDist = formatCompactDist(m.hzState.MoonDist)
 	}
 

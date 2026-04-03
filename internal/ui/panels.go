@@ -318,13 +318,8 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 		content = errorStyle.Render("Waiting for Horizons data...")
 	} else if m.hzState != nil {
 		s := m.hzState
-		earthDist := s.EarthDist
+		earthDist := effectiveEarthDist(m)
 		moonDist := s.MoonDist
-
-		// Use DSN range if available (more real-time)
-		if m.dsnStatus != nil && m.dsnStatus.Range > 0 {
-			earthDist = m.dsnStatus.Range
-		}
 
 		var signalStr string
 		if s.IsOccluded() {
@@ -541,6 +536,16 @@ func formatMoonDist(km float64) string {
 		return dimStyle.Render("calculating...")
 	}
 	return formatDist(km)
+}
+
+func effectiveEarthDist(m Model) float64 {
+	if m.dsnStatus != nil && m.dsnStatus.Range > 0 {
+		return m.dsnStatus.Range
+	}
+	if m.hzState != nil {
+		return m.hzState.EarthDist
+	}
+	return 0
 }
 
 func formatEarthRate(s *horizons.State) string {

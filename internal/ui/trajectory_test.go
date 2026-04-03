@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"artemis/internal/dsn"
 	"artemis/internal/horizons"
 )
 
@@ -77,5 +78,33 @@ func TestFormatStateAgePrefersEphemerisSampleTime(t *testing.T) {
 	got := formatStateAge(m, now)
 	if !strings.Contains(got, "HZ 1m35s") {
 		t.Fatalf("expected HZ age to use sample time, got %q", got)
+	}
+}
+
+func TestEffectiveEarthDistPrefersDSNRange(t *testing.T) {
+	m := Model{
+		hzState:   &horizons.State{EarthDist: 65000},
+		dsnStatus: &dsn.Status{Range: 62000},
+	}
+
+	if got := effectiveEarthDist(m); got != 62000 {
+		t.Fatalf("effectiveEarthDist() = %v, want 62000", got)
+	}
+}
+
+func TestFormatCompactDist(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{950, "950 km"},
+		{65000, "65k km"},
+		{1336000, "1.3M km"},
+	}
+
+	for _, tc := range cases {
+		if got := formatCompactDist(tc.in); got != tc.want {
+			t.Fatalf("formatCompactDist(%v) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

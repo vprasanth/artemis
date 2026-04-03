@@ -146,7 +146,7 @@ func renderRangeFinder(m Model, w, h int) string {
 	earthDist := 0.0
 	moonDist := 0.0
 	if m.hzState != nil {
-		earthDist = m.hzState.EarthDist
+		earthDist = effectiveEarthDist(m)
 		moonDist = m.hzState.MoonDist
 	}
 
