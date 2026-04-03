@@ -58,21 +58,21 @@ type Model struct {
 	width  int
 	height int
 
-	showGantt            bool   // toggle between Gantt chart and event timeline
-	showStars            bool   // toggle starfield in trajectory
-	notificationsEnabled bool   // toggle native desktop notifications
-	debugKeysEnabled     bool   // enable debug-only keybindings
-	visualizationFullscreen bool // expand visualization into the primary content area
-	tickCount            uint64 // monotonic frame counter for animation
-	trajectoryView       int    // 0=Trajectory, 1=Orbital, 2=Instruments
+	showGantt               bool   // toggle between Gantt chart and event timeline
+	showStars               bool   // toggle starfield in trajectory
+	notificationsEnabled    bool   // toggle native desktop notifications
+	debugKeysEnabled        bool   // enable debug-only keybindings
+	visualizationFullscreen bool   // expand visualization into the primary content area
+	tickCount               uint64 // monotonic frame counter for animation
+	trajectoryView          int    // 0=Trajectory, 1=Orbital, 2=Instruments
 
-	speedHistory   []float64          // ring buffer (cap 24) for sparkline
-	positionTrail  []horizons.Vector3 // ring buffer (cap 12) for recent live trail
-	trajectoryPath []horizons.Vector3 // Horizons-sampled mission arc for trajectory view
-	radialHistory  []float64          // ring buffer for Earth radial velocity trend
-	dsnRangeHistory []float64         // ring buffer for DSN downleg range trend
-	rtltHistory    []float64          // ring buffer for DSN round-trip light time trend
-	dsnRateHistory []float64          // ring buffer for active DSN downlink rate trend
+	speedHistory    []float64          // ring buffer (cap 24) for sparkline
+	positionTrail   []horizons.Vector3 // ring buffer (cap 12) for recent live trail
+	trajectoryPath  []horizons.Vector3 // Horizons-sampled mission arc for trajectory view
+	radialHistory   []float64          // ring buffer for Earth radial velocity trend
+	dsnRangeHistory []float64          // ring buffer for DSN downleg range trend
+	rtltHistory     []float64          // ring buffer for DSN round-trip light time trend
+	dsnRateHistory  []float64          // ring buffer for active DSN downlink rate trend
 
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
@@ -100,12 +100,12 @@ type Model struct {
 	blogPrimed       bool
 	lastSeenBlogID   int
 
-	lastDSNFetch     time.Time
-	lastHorizonFetch time.Time
+	lastDSNFetch         time.Time
+	lastHorizonFetch     time.Time
 	lastHorizonPathFetch time.Time
-	lastSWFetch      time.Time
-	lastBlogFetch    time.Time
-	startedAt        time.Time
+	lastSWFetch          time.Time
+	lastBlogFetch        time.Time
+	startedAt            time.Time
 
 	phasePrimed         bool
 	lastPhaseIndex      int
@@ -266,6 +266,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.layout != nil {
 			if pl := m.layout[panelTrajectory]; pl.visible {
 				m.cachedTrajectory = m.renderCachedTrajectoryPanel(pl.height)
+			}
+			if pl := m.layout[panelTimeline]; pl.visible {
+				timeline := m.renderCachedTimelinePanel(pl.width)
+				if measureHeight(timeline) != pl.height {
+					m.buildCache()
+				} else {
+					m.cachedTimeline = timeline
+				}
 			}
 		}
 
@@ -501,11 +509,7 @@ func (m *Model) buildCache() {
 	m.cachedBlog = renderMissionLogPanel(*m, w, 5, m.selectedLogEntry)
 	m.cachedCrew = renderCrewPanel(w)
 
-	if m.showGantt {
-		m.cachedTimeline = renderGanttPanel(w)
-	} else {
-		m.cachedTimeline = renderTimelinePanel(w)
-	}
+	m.cachedTimeline = m.renderCachedTimelinePanel(w)
 
 	// Phase 2: Measure fixed-height panels.
 	measured := map[panelID]int{
@@ -610,6 +614,13 @@ func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
 	}
 
 	return ""
+}
+
+func (m Model) renderCachedTimelinePanel(w int) string {
+	if m.showGantt {
+		return renderGanttPanelAt(w, mission.MET())
+	}
+	return renderTimelinePanelAt(w, mission.MET())
 }
 
 func tickCmd() tea.Cmd {

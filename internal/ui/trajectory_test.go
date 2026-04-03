@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,45 @@ func TestRenderTrajectoryShowsArcStatus(t *testing.T) {
 	got := renderTrajectory(m, 60, 12)
 	if !strings.Contains(got, "arc unavailable") {
 		t.Fatalf("expected trajectory render to show arc status, got:\n%s", got)
+	}
+}
+
+func TestTrajectoryLegendUsesClearerDirectionLabels(t *testing.T) {
+	canvas := make([][]string, 10)
+	for i := range canvas {
+		canvas[i] = make([]string, 20)
+		for j := range canvas[i] {
+			canvas[i][j] = " "
+		}
+	}
+
+	placeLegend(canvas, 20, 10)
+
+	var rows []string
+	for _, row := range canvas {
+		rows = append(rows, strings.Join(row, ""))
+	}
+	got := strings.Join(rows, "\n")
+	if !strings.Contains(got, "away") || !strings.Contains(got, "return") {
+		t.Fatalf("expected legend to include clearer direction labels, got:\n%s", got)
+	}
+}
+
+func TestRayEdgePointProjectsToViewportBoundary(t *testing.T) {
+	edge, ok := rayEdgePoint(pathPoint{x: 10, y: 5}, pathPoint{x: 30, y: 2}, 40, 20)
+	if !ok {
+		t.Fatal("expected ray to intersect viewport boundary")
+	}
+	if edge.x < 1 || edge.x > 38 || edge.y < 1 || edge.y > 17 {
+		t.Fatalf("edge point %+v outside expected viewport bounds", edge)
+	}
+}
+
+func TestApproximateSunVectorIsNormalized(t *testing.T) {
+	v := approximateSunVector(time.Date(2026, time.April, 3, 0, 0, 0, 0, time.UTC))
+	mag := math.Hypot(v.X, v.Y)
+	if mag < 0.999 || mag > 1.001 {
+		t.Fatalf("approximateSunVector magnitude = %v, want about 1", mag)
 	}
 }
 

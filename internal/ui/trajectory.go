@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -43,6 +44,9 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 	if moonVec, ok := earthMoonVector(m.hzState); ok {
 		moonPoint := frame.project(moonVec)
 		placeGlyph(canvas, moonPoint.x, moonPoint.y, plotW, "M", "[", "]", moonGlyphStyle)
+	}
+	if plotW >= 24 && plotH >= 8 {
+		placeSunDirection(canvas, frame, earthPoint, plotW, plotH, time.Now().UTC())
 	}
 
 	// Layer 4: Distance labels.
@@ -369,11 +373,17 @@ func placeLegend(canvas [][]string, plotW, plotH int) {
 		ch    string
 		label string
 	}{
-		{pathOutboundStyle.Render("─"), " out"},
-		{pathReturnStyle.Render("─"), " ret"},
+		{pathOutboundStyle.Render("─"), " away"},
+		{pathReturnStyle.Render("─"), " return"},
 	}
 	startY := plotH - len(items)
-	startX := plotW - 6
+	maxLabel := 0
+	for _, item := range items {
+		if len(item.label) > maxLabel {
+			maxLabel = len(item.label)
+		}
+	}
+	startX := plotW - (maxLabel + 2)
 	if startX < 0 || startY < 0 {
 		return
 	}
@@ -390,6 +400,107 @@ func placeLegend(canvas [][]string, plotW, plotH int) {
 			}
 		}
 	}
+}
+
+func placeSunDirection(canvas [][]string, frame trajectoryFrame, earthPoint pathPoint, plotW, plotH int, now time.Time) {
+	sunVec := approximateSunVector(now)
+	sunPoint := frame.project(horizons.Vector3{
+		X: sunVec.X * frame.scale * 100,
+		Y: sunVec.Y * frame.scale * 100,
+	})
+	edge, ok := rayEdgePoint(earthPoint, sunPoint, plotW, plotH)
+	if !ok {
+		return
+	}
+
+	label := "SUN"
+	startX := edge.x - len(label)/2
+	startY := edge.y
+	if edge.x >= plotW-4 {
+		startX = edge.x - len(label) + 1
+	}
+	if edge.x <= 3 {
+		startX = edge.x
+	}
+	if edge.y <= 1 {
+		startY = edge.y + 1
+	}
+	if edge.y >= plotH-3 {
+		startY = edge.y - 1
+	}
+
+	for i, ch := range label {
+		x := startX + i
+		if x >= 0 && x < plotW && startY >= 0 && startY < plotH {
+			canvas[startY][x] = sunDirectionStyle.Render(string(ch))
+		}
+	}
+}
+
+func approximateSunVector(now time.Time) horizons.Vector3 {
+	j2000 := time.Date(2000, time.January, 1, 12, 0, 0, 0, time.UTC)
+	days := now.Sub(j2000).Hours() / 24
+
+	meanLongitude := normalizeDegrees(280.460 + 0.9856474*days)
+	meanAnomaly := normalizeDegrees(357.528 + 0.9856003*days)
+	meanAnomalyRad := meanAnomaly * math.Pi / 180
+	lambda := normalizeDegrees(meanLongitude + 1.915*math.Sin(meanAnomalyRad) + 0.020*math.Sin(2*meanAnomalyRad))
+	lambdaRad := lambda * math.Pi / 180
+
+	return horizons.Vector3{
+		X: math.Cos(lambdaRad),
+		Y: math.Sin(lambdaRad),
+	}
+}
+
+func normalizeDegrees(v float64) float64 {
+	v = math.Mod(v, 360)
+	if v < 0 {
+		v += 360
+	}
+	return v
+}
+
+func rayEdgePoint(origin, target pathPoint, plotW, plotH int) (pathPoint, bool) {
+	minX, maxX := 1.0, float64(plotW-2)
+	minY, maxY := 1.0, float64(plotH-3)
+	dx := float64(target.x - origin.x)
+	dy := float64(target.y - origin.y)
+	if dx == 0 && dy == 0 {
+		return pathPoint{}, false
+	}
+
+	candidates := make([]float64, 0, 4)
+	if dx > 0 {
+		candidates = append(candidates, (maxX-float64(origin.x))/dx)
+	} else if dx < 0 {
+		candidates = append(candidates, (minX-float64(origin.x))/dx)
+	}
+	if dy > 0 {
+		candidates = append(candidates, (maxY-float64(origin.y))/dy)
+	} else if dy < 0 {
+		candidates = append(candidates, (minY-float64(origin.y))/dy)
+	}
+
+	bestT := math.Inf(1)
+	var best pathPoint
+	for _, t := range candidates {
+		if t <= 0 || t >= bestT {
+			continue
+		}
+		x := float64(origin.x) + dx*t
+		y := float64(origin.y) + dy*t
+		if x < minX || x > maxX || y < minY || y > maxY {
+			continue
+		}
+		bestT = t
+		best = pathPoint{x: int(math.Round(x)), y: int(math.Round(y))}
+	}
+
+	if math.IsInf(bestT, 1) {
+		return pathPoint{}, false
+	}
+	return best, true
 }
 
 func placeTrajectoryStatus(canvas [][]string, status string, plotW, plotH int) {

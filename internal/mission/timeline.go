@@ -73,7 +73,28 @@ func MET() time.Duration {
 }
 
 func MissionDay() int {
-	return int(MET().Hours()/24) + 1
+	return MissionDayAt(MET())
+}
+
+func MissionDayAt(met time.Duration) int {
+	if met <= 0 {
+		return 1
+	}
+
+	day := int(met.Hours()/24) + 1
+	total := TotalMissionDays()
+	if day > total {
+		return total
+	}
+	return day
+}
+
+func TotalDuration() time.Duration {
+	return Timeline[len(Timeline)-1].METOffset
+}
+
+func TotalMissionDays() int {
+	return int(TotalDuration().Hours()/24) + 1
 }
 
 func FormatMET(met time.Duration) string {
@@ -139,7 +160,7 @@ func NextEvent(met time.Duration) *Event {
 
 func MissionProgress() float64 {
 	met := MET()
-	totalDuration := Timeline[len(Timeline)-1].METOffset
+	totalDuration := TotalDuration()
 	progress := float64(met) / float64(totalDuration)
 	if progress < 0 {
 		return 0

@@ -11,8 +11,11 @@ import (
 const ganttLabelWidth = 15
 
 func renderGanttPanel(w int) string {
-	met := mission.MET()
-	totalDur := mission.Timeline[len(mission.Timeline)-1].METOffset
+	return renderGanttPanelAt(w, mission.MET())
+}
+
+func renderGanttPanelAt(w int, met time.Duration) string {
+	totalDur := mission.TotalDuration()
 
 	barW := w - 4 - ganttLabelWidth
 	if barW < 20 {
@@ -57,10 +60,11 @@ func renderGanttPanel(w int) string {
 	// Status line
 	phaseIdx := mission.CurrentPhase(met)
 	phaseName := mission.Phases[phaseIdx].Name
-	day := mission.MissionDay()
+	day := mission.MissionDayAt(met)
+	totalDays := mission.TotalMissionDays()
 	statusLine := fmt.Sprintf("  %s  %s  %s %s",
 		metStyle.Render(mission.FormatMET(met)),
-		dimStyle.Render(fmt.Sprintf("Day %d/10", day)),
+		dimStyle.Render(fmt.Sprintf("Day %d/%d", day, totalDays)),
 		labelStyle.Render("Phase:"),
 		currentStyle.Render(phaseName),
 	)
@@ -70,6 +74,31 @@ func renderGanttPanel(w int) string {
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("MISSION GANTT CHART") + "\n" + content,
 	)
+}
+
+type dayAxisMark struct {
+	offset time.Duration
+	label  string
+}
+
+func dayAxisMarks(totalDur time.Duration) []dayAxisMark {
+	fullDays := int(totalDur / (24 * time.Hour))
+	marks := make([]dayAxisMark, 0, fullDays+2)
+	for day := 0; day <= fullDays; day++ {
+		marks = append(marks, dayAxisMark{
+			offset: time.Duration(day) * 24 * time.Hour,
+			label:  fmt.Sprintf("%d", day),
+		})
+	}
+
+	if totalDur%(24*time.Hour) != 0 {
+		marks = append(marks, dayAxisMark{
+			offset: totalDur,
+			label:  "E",
+		})
+	}
+
+	return marks
 }
 
 func metToCol(met time.Duration, barWidth int, totalDur time.Duration) int {
@@ -94,15 +123,14 @@ func renderDayAxis(barWidth int, totalDur time.Duration) (string, string) {
 		tickLine[i] = ' '
 	}
 
-	for day := 0; day <= 10; day++ {
-		col := metToCol(time.Duration(day)*24*time.Hour, barWidth, totalDur)
+	for _, mark := range dayAxisMarks(totalDur) {
+		col := metToCol(mark.offset, barWidth, totalDur)
 		if col >= barWidth {
 			col = barWidth - 1
 		}
 		tickLine[col] = '|'
-		label := fmt.Sprintf("%d", day)
-		if col+len(label) <= barWidth {
-			copy(dayLine[col:], label)
+		if col+len(mark.label) <= barWidth {
+			copy(dayLine[col:], mark.label)
 		}
 	}
 

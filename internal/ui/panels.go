@@ -287,8 +287,12 @@ func renderTopRow(m Model, w int) string {
 }
 
 func renderClockPanel(w, totalHeight int) string {
-	met := mission.MET()
-	day := mission.MissionDay()
+	return renderClockPanelAt(w, totalHeight, mission.MET())
+}
+
+func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
+	day := mission.MissionDayAt(met)
+	totalDays := mission.TotalMissionDays()
 	metStr := mission.FormatMET(met)
 
 	var nextLine string
@@ -305,13 +309,13 @@ func renderClockPanel(w, totalHeight int) string {
 		nextLine = activeStyle.Render("Mission Complete")
 	}
 
-	content := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s / 10\n\n%s",
+	content := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n\n%s",
 		labelStyle.Render("MET:"),
 		metStyle.Render(metStr),
 		labelStyle.Render("UTC:"),
 		valueStyle.Render(fmt.Sprintf("%s", mission.LaunchTime.Add(met).UTC().Format("2006-01-02 15:04:05"))),
 		labelStyle.Render("Day:"),
-		valueStyle.Render(fmt.Sprintf("%d", day)),
+		valueStyle.Render(fmt.Sprintf("%d / %d", day, totalDays)),
 		nextLine,
 	)
 
@@ -458,7 +462,10 @@ func renderDSNPanel(m Model, w int) string {
 }
 
 func renderTimelinePanel(w int) string {
-	met := mission.MET()
+	return renderTimelinePanelAt(w, mission.MET())
+}
+
+func renderTimelinePanelAt(w int, met time.Duration) string {
 	currentIdx := mission.CurrentEventIndex(met)
 	events := mission.Timeline
 
@@ -557,6 +564,7 @@ func visualizationMeta(m Model, fullscreen bool) (string, string) {
 		legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
 			moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
 			spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
+			sunDirectionStyle.Render("SUN") + dimStyle.Render("=Sun dir  ") +
 			dimStyle.Render("s: stars  v: switch view") + fullscreenHint
 		return "TRAJECTORY", legend
 	}

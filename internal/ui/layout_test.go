@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
+	"artemis/internal/mission"
 )
 
 func TestRenderInstrumentsCompactHeightKeepsPrimaryTelemetry(t *testing.T) {
@@ -52,11 +54,11 @@ func TestRenderInstrumentsShowsScopeExplanationsAndDerivedMetrics(t *testing.T) 
 			MoonDist:     342000,
 			Speed:        2.16,
 		},
-		speedHistory: []float64{2.01, 2.08, 2.16},
-		radialHistory: []float64{1.90, 2.02, 2.14},
+		speedHistory:    []float64{2.01, 2.08, 2.16},
+		radialHistory:   []float64{1.90, 2.02, 2.14},
 		dsnRangeHistory: []float64{21000, 21800, 22500},
-		rtltHistory: []float64{0.2, 0.21, 0.22},
-		dsnRateHistory: []float64{1_200_000, 1_600_000, 2_100_000},
+		rtltHistory:     []float64{0.2, 0.21, 0.22},
+		dsnRateHistory:  []float64{1_200_000, 1_600_000, 2_100_000},
 	}
 
 	got := renderInstruments(m, 120, 30)
@@ -112,6 +114,15 @@ func TestRenderTopRowUsesSharedHeight(t *testing.T) {
 	}
 }
 
+func TestRenderClockPanelUsesDerivedMissionDayTotal(t *testing.T) {
+	met := mission.TotalDuration() + 6*time.Hour
+	got := renderClockPanelAt(60, 0, met)
+	want := fmt.Sprintf("%d / %d", mission.TotalMissionDays(), mission.TotalMissionDays())
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected clock panel to show derived mission day total %q, got:\n%s", want, got)
+	}
+}
+
 func TestRenderSpacecraftPanelShowsDerivedTelemetry(t *testing.T) {
 	now := time.Now()
 	m := Model{
@@ -161,6 +172,27 @@ func TestEclipticCoords(t *testing.T) {
 	}
 	if lat < 35.2 || lat > 35.3 {
 		t.Fatalf("latitude = %v, want about 35.26", lat)
+	}
+}
+
+func TestDayAxisMarksUseMissionEnd(t *testing.T) {
+	marks := dayAxisMarks(mission.TotalDuration())
+	if len(marks) == 0 {
+		t.Fatal("expected day axis marks")
+	}
+
+	last := marks[len(marks)-1]
+	if last.label != "E" {
+		t.Fatalf("expected final day axis mark to label mission end, got %#v", last)
+	}
+	if last.offset != mission.TotalDuration() {
+		t.Fatalf("expected final day axis mark at total mission duration, got %v want %v", last.offset, mission.TotalDuration())
+	}
+
+	for _, mark := range marks {
+		if mark.label == "10" {
+			t.Fatalf("did not expect synthetic day-10 axis mark for mission duration %v", mission.TotalDuration())
+		}
 	}
 }
 
@@ -365,9 +397,9 @@ func TestRenderVisualizationPanelFullscreenEmbedsTopRow(t *testing.T) {
 
 func TestBuildCacheHidesTopRowInFullscreen(t *testing.T) {
 	m := Model{
-		width:                    120,
-		height:                   40,
-		visualizationFullscreen:  true,
+		width:                   120,
+		height:                  40,
+		visualizationFullscreen: true,
 	}
 
 	m.buildCache()

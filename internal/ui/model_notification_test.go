@@ -371,3 +371,32 @@ func TestTrajectoryPathWindowClampsToFlownMissionSpan(t *testing.T) {
 		t.Fatalf("after-mission stop = %v, want %v", afterMissionStop, wantEnd)
 	}
 }
+
+func TestTickRefreshesCachedTimeline(t *testing.T) {
+	originalLaunchTime := mission.LaunchTime
+	defer func() {
+		mission.LaunchTime = originalLaunchTime
+	}()
+
+	now := time.Now().UTC()
+	mission.LaunchTime = now.Add(-1 * time.Hour)
+
+	m := Model{
+		width:     120,
+		height:    40,
+		showGantt: true,
+	}
+	m.buildCache()
+	before := m.cachedTimeline
+	if before == "" {
+		t.Fatal("expected initial cached timeline")
+	}
+
+	mission.LaunchTime = now.Add(-26 * time.Hour)
+	model, _ := m.Update(tickMsg(now))
+	got := model.(Model)
+
+	if got.cachedTimeline == before {
+		t.Fatalf("expected tick to refresh cached timeline when MET changes")
+	}
+}

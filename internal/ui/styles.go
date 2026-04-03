@@ -142,6 +142,7 @@ var (
 	spacecraftLOSDim     lipgloss.Style
 	pathOutboundStyle    lipgloss.Style
 	pathReturnStyle      lipgloss.Style
+	sunDirectionStyle    lipgloss.Style
 	trajectoryLabelStyle lipgloss.Style
 
 	// Orbital view styles.
@@ -325,6 +326,10 @@ func applyTheme(id ThemeID) {
 		Foreground(colorAccent)
 
 	pathReturnStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorYellow)
+
+	sunDirectionStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(colorYellow)
 
