@@ -535,6 +535,34 @@ func TestUpdateTracksHorizonsAndDSNMetricHistories(t *testing.T) {
 	}
 }
 
+func TestHorizonsHistoryMsgSeedsRestartBuffers(t *testing.T) {
+	model, cmd := Model{
+		positionTrail: []horizons.Vector3{{X: 30}},
+		speedHistory:  []float64{3},
+		radialHistory: []float64{3},
+	}.Update(horizonsHistoryMsg{
+		states: []horizons.State{
+			{Position: horizons.Vector3{X: 10}, Velocity: horizons.Vector3{X: 1}, Speed: 1},
+			{Position: horizons.Vector3{X: 20}, Velocity: horizons.Vector3{X: 2}, Speed: 2},
+			{Position: horizons.Vector3{X: 30}, Velocity: horizons.Vector3{X: 3}, Speed: 3},
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for horizons history bootstrap")
+	}
+
+	got := model.(Model)
+	if len(got.positionTrail) != 3 || got.positionTrail[0].X != 10 || got.positionTrail[2].X != 30 {
+		t.Fatalf("unexpected seeded positionTrail: %#v", got.positionTrail)
+	}
+	if len(got.speedHistory) != 3 || got.speedHistory[0] != 1 || got.speedHistory[2] != 3 {
+		t.Fatalf("unexpected seeded speedHistory: %#v", got.speedHistory)
+	}
+	if len(got.radialHistory) != 3 || got.radialHistory[0] != 1 || got.radialHistory[2] != 3 {
+		t.Fatalf("unexpected seeded radialHistory: %#v", got.radialHistory)
+	}
+}
+
 func TestUpdateTracksSpaceWeatherHistories(t *testing.T) {
 	model, cmd := Model{}.Update(swMsg{
 		status: &spaceweather.Status{
@@ -560,6 +588,41 @@ func TestUpdateTracksSpaceWeatherHistories(t *testing.T) {
 	}
 	if len(got.protonFluxHistory) != 1 || got.protonFluxHistory[0] != 1.25 {
 		t.Fatalf("unexpected proton history: %#v", got.protonFluxHistory)
+	}
+}
+
+func TestSpaceWeatherHistoryMsgSeedsRestartBuffers(t *testing.T) {
+	model, cmd := Model{
+		kpHistory:          []float64{4},
+		bzHistory:          []float64{-5},
+		windSpeedHistory:   []float64{510},
+		protonFluxHistory:  []float64{1.2},
+		windDensityHistory: []float64{7},
+		windTempHistory:    []float64{100000},
+	}.Update(swHistoryMsg{
+		history: &spaceweather.TrendHistory{
+			Kp:              []float64{2, 3, 4},
+			Bz:              []float64{-1, -3, -5},
+			Bt:              []float64{5, 6, 7},
+			WindSpeed:       []float64{450, 480, 510},
+			WindDensity:     []float64{5, 6, 7},
+			WindTemp:        []float64{80000, 90000, 100000},
+			ProtonFlux10MeV: []float64{0.4, 0.8, 1.2},
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for space-weather history bootstrap")
+	}
+
+	got := model.(Model)
+	if len(got.kpHistory) != 3 || got.kpHistory[0] != 2 || got.kpHistory[2] != 4 {
+		t.Fatalf("unexpected seeded kpHistory: %#v", got.kpHistory)
+	}
+	if len(got.windSpeedHistory) != 3 || got.windSpeedHistory[0] != 450 || got.windSpeedHistory[2] != 510 {
+		t.Fatalf("unexpected seeded windSpeedHistory: %#v", got.windSpeedHistory)
+	}
+	if len(got.protonFluxHistory) != 3 || got.protonFluxHistory[0] != 0.4 || got.protonFluxHistory[2] != 1.2 {
+		t.Fatalf("unexpected seeded protonFluxHistory: %#v", got.protonFluxHistory)
 	}
 }
 

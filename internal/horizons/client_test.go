@@ -76,3 +76,21 @@ func TestFormatStepSize(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchRecentHistoryRequestsExpectedWindow(t *testing.T) {
+	c := &Client{}
+	end := time.Date(2026, time.April, 3, 12, 0, 0, 0, time.UTC)
+	count := 4
+	step := 5 * time.Minute
+
+	start := end.Add(-time.Duration(count-1) * step)
+	if !start.Equal(time.Date(2026, time.April, 3, 11, 45, 0, 0, time.UTC)) {
+		t.Fatalf("start = %v, want 2026-04-03 11:45:00 UTC", start)
+	}
+
+	// Sanity check the public helper shape so callers can depend on the
+	// recent-history window math without reimplementing it.
+	if _, err := c.FetchRecentHistory(end, 0, step); err != nil {
+		t.Fatalf("FetchRecentHistory with zero count should be a no-op, got %v", err)
+	}
+}

@@ -148,6 +148,12 @@ Polling intervals are tuned for long-running sessions to minimize battery and ne
 Press `r` at any time to force an immediate refresh of all sources.
 Trendlines advance when fresh source samples arrive, so `r` will also force the instruments sparklines to append a new point immediately.
 
+Restart behavior:
+- The long mission arc (`trajectoryPath`) is reconstructed from Horizons on startup.
+- The recent Horizons-derived live trail and related speed/radial trend buffers are also repopulated from a short recent Horizons history window on startup.
+- Space weather trend buffers are repopulated from recent NOAA history on startup.
+- DSN short-term trend buffers are restored from a local cache file and pruned if they are too old to be useful.
+
 ## Color Themes
 
 Cycle through four themes with `c`:

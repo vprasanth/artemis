@@ -26,14 +26,14 @@ type ScaleLevel struct {
 
 type Status struct {
 	// NOAA R/S/G scales (0-5)
-	RadioBlackout ScaleLevel
+	RadioBlackout  ScaleLevel
 	SolarRadiation ScaleLevel
-	GeomagStorm   ScaleLevel
+	GeomagStorm    ScaleLevel
 
 	// Solar wind
-	WindSpeed float64 // km/s
+	WindSpeed   float64 // km/s
 	WindDensity float64 // n/cc
-	WindTemp  float64 // K
+	WindTemp    float64 // K
 
 	// Magnetic field
 	Bz float64 // nT (negative = southward = bad)
@@ -52,6 +52,16 @@ type Status struct {
 	LatestAlert string
 
 	Timestamp time.Time
+}
+
+type TrendHistory struct {
+	Kp              []float64
+	Bz              []float64
+	Bt              []float64
+	WindSpeed       []float64
+	WindDensity     []float64
+	WindTemp        []float64
+	ProtonFlux10MeV []float64
 }
 
 type Client struct {
@@ -98,6 +108,36 @@ func (c *Client) Fetch() (*Status, error) {
 		return nil, fmt.Errorf("spaceweather: all fetches failed, last: %w", lastErr)
 	}
 	return s, nil
+}
+
+func (c *Client) FetchTrendHistory(limit int) (*TrendHistory, error) {
+	if limit <= 0 {
+		return &TrendHistory{}, nil
+	}
+
+	h := &TrendHistory{}
+	var lastErr error
+
+	if err := c.fetchKpHistory(h, limit); err != nil {
+		lastErr = err
+	}
+	if err := c.fetchPlasmaHistory(h, limit); err != nil {
+		lastErr = err
+	}
+	if err := c.fetchMagHistory(h, limit); err != nil {
+		lastErr = err
+	}
+	if err := c.fetchProtonHistory(h, limit); err != nil {
+		lastErr = err
+	}
+
+	if len(h.Kp) > 0 || len(h.WindSpeed) > 0 || len(h.Bz) > 0 || len(h.ProtonFlux10MeV) > 0 {
+		return h, nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("spaceweather history: all fetches failed, last: %w", lastErr)
+	}
+	return h, nil
 }
 
 func (c *Client) fetchScales(s *Status) error {
@@ -166,6 +206,29 @@ func (c *Client) fetchKp(s *Status) error {
 	return nil
 }
 
+func (c *Client) fetchKpHistory(h *TrendHistory, limit int) error {
+	body, err := c.get(kpURL)
+	if err != nil {
+		return err
+	}
+
+	var entries []map[string]interface{}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return fmt.Errorf("parse kp history: %w", err)
+	}
+
+	values := make([]float64, 0, len(entries))
+	for _, entry := range entries {
+		kp := parseJSONFloat(entry["estimated_kp"])
+		if kp == 0 {
+			kp = parseJSONFloat(entry["kp_index"])
+		}
+		values = append(values, kp)
+	}
+	h.Kp = tailFloatSlice(values, limit)
+	return nil
+}
+
 func (c *Client) fetchPlasma(s *Status) error {
 	body, err := c.get(plasmaURL)
 	if err != nil {
@@ -191,6 +254,35 @@ func (c *Client) fetchPlasma(s *Status) error {
 	return nil
 }
 
+func (c *Client) fetchPlasmaHistory(h *TrendHistory, limit int) error {
+	body, err := c.get(plasmaURL)
+	if err != nil {
+		return err
+	}
+
+	var rows [][]interface{}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return fmt.Errorf("parse plasma history: %w", err)
+	}
+	if len(rows) < 2 {
+		return nil
+	}
+
+	var density, speed, temp []float64
+	for _, row := range rows[1:] {
+		if len(row) < 4 {
+			continue
+		}
+		density = append(density, parseJSONFloat(row[1]))
+		speed = append(speed, parseJSONFloat(row[2]))
+		temp = append(temp, parseJSONFloat(row[3]))
+	}
+	h.WindDensity = tailFloatSlice(density, limit)
+	h.WindSpeed = tailFloatSlice(speed, limit)
+	h.WindTemp = tailFloatSlice(temp, limit)
+	return nil
+}
+
 func (c *Client) fetchMag(s *Status) error {
 	body, err := c.get(magURL)
 	if err != nil {
@@ -211,6 +303,33 @@ func (c *Client) fetchMag(s *Status) error {
 		s.Bz = parseJSONFloat(last[3])
 		s.Bt = parseJSONFloat(last[6])
 	}
+	return nil
+}
+
+func (c *Client) fetchMagHistory(h *TrendHistory, limit int) error {
+	body, err := c.get(magURL)
+	if err != nil {
+		return err
+	}
+
+	var rows [][]interface{}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return fmt.Errorf("parse mag history: %w", err)
+	}
+	if len(rows) < 2 {
+		return nil
+	}
+
+	var bz, bt []float64
+	for _, row := range rows[1:] {
+		if len(row) < 7 {
+			continue
+		}
+		bz = append(bz, parseJSONFloat(row[3]))
+		bt = append(bt, parseJSONFloat(row[6]))
+	}
+	h.Bz = tailFloatSlice(bz, limit)
+	h.Bt = tailFloatSlice(bt, limit)
 	return nil
 }
 
@@ -261,6 +380,32 @@ func (c *Client) fetchProtons(s *Status) error {
 	return nil
 }
 
+func (c *Client) fetchProtonHistory(h *TrendHistory, limit int) error {
+	body, err := c.get(protonURL)
+	if err != nil {
+		return err
+	}
+
+	var entries []struct {
+		TimeTag string  `json:"time_tag"`
+		Flux    float64 `json:"flux"`
+		Energy  string  `json:"energy"`
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return fmt.Errorf("parse proton history: %w", err)
+	}
+
+	values := make([]float64, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Energy != ">=10 MeV" {
+			continue
+		}
+		values = append(values, entry.Flux)
+	}
+	h.ProtonFlux10MeV = tailFloatSlice(values, limit)
+	return nil
+}
+
 func (c *Client) fetchAlerts(s *Status) error {
 	body, err := c.get(alertsURL)
 	if err != nil {
@@ -306,4 +451,16 @@ func parseJSONFloat(v interface{}) float64 {
 		return f
 	}
 	return 0
+}
+
+func tailFloatSlice(values []float64, limit int) []float64 {
+	if limit <= 0 || len(values) == 0 {
+		return nil
+	}
+	if len(values) > limit {
+		values = values[len(values)-limit:]
+	}
+	out := make([]float64, len(values))
+	copy(out, values)
+	return out
 }

@@ -22,6 +22,7 @@ const (
 	maxPositionTrail     = 12
 	maxMetricHistory     = 24
 	trajectoryPathSample = 30 * time.Minute
+	historyBootstrapSize = maxMetricHistory
 	uiTickInterval       = 1 * time.Second
 	sizeProbeInterval    = 5 * time.Second
 
@@ -46,9 +47,19 @@ type horizonsPathMsg struct {
 	err    error
 }
 
+type horizonsHistoryMsg struct {
+	states []horizons.State
+	err    error
+}
+
 type swMsg struct {
 	status *spaceweather.Status
 	err    error
+}
+
+type swHistoryMsg struct {
+	history *spaceweather.TrendHistory
+	err     error
 }
 
 type blogMsg struct {
@@ -203,6 +214,9 @@ type Model struct {
 	dsnRangeHistory []float64          // ring buffer for DSN downleg range trend
 	rtltHistory     []float64          // ring buffer for DSN round-trip light time trend
 	dsnRateHistory  []float64          // ring buffer for active DSN downlink rate trend
+	dsnRangeAt      []time.Time
+	rtltAt          []time.Time
+	dsnRateAt       []time.Time
 
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
@@ -270,6 +284,7 @@ type Model struct {
 
 func NewModel() Model {
 	now := time.Now()
+	persistedDSN, _ := loadDefaultDSNHistory(now.UTC())
 	return Model{
 		showGantt:               true,
 		visualEffects:           effectsStarsPulse,
@@ -281,6 +296,12 @@ func NewModel() Model {
 		screenProtectNow:        now,
 		screenProtectDriftAfter: parseEnvDuration("ARTEMIS_SCREEN_PROTECT_DRIFT_INTERVAL", defaultScreenProtectDriftInterval),
 		screenProtectIdleAfter:  parseEnvDuration("ARTEMIS_SCREEN_PROTECT_IDLE_AFTER", defaultScreenProtectIdleAfter),
+		dsnRangeHistory:         persistedDSN.rangeValues,
+		rtltHistory:             persistedDSN.rtltValues,
+		dsnRateHistory:          persistedDSN.rateValues,
+		dsnRangeAt:              persistedDSN.rangeTimes,
+		rtltAt:                  persistedDSN.rtltTimes,
+		dsnRateAt:               persistedDSN.rateTimes,
 		dsnClient:               dsn.NewClient(),
 		horizonsClient:          horizons.NewClient(),
 		swClient:                spaceweather.NewClient(),
@@ -301,8 +322,10 @@ func (m Model) Init() tea.Cmd {
 		tickCmd(),
 		fetchDSN(m.dsnClient),
 		fetchHorizons(m.horizonsClient),
+		fetchHorizonsHistory(m.horizonsClient),
 		fetchHorizonPath(m.horizonsClient),
 		fetchSW(m.swClient),
+		fetchSpaceWeatherHistory(m.swClient),
 		fetchBlog(m.blogClient),
 	)
 }
@@ -485,21 +508,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dsnMsg:
 		m.dsnLoading = false
-		m.lastDSNFetch = time.Now()
+		sampleTime := time.Now().UTC()
+		m.lastDSNFetch = sampleTime
 		if msg.err != nil {
 			m.dsnErr = msg.err
 		} else {
 			m.dsnStatus = msg.status
 			m.dsnErr = nil
 			if msg.status.Range > 0 {
-				m.dsnRangeHistory = appendMetricHistory(m.dsnRangeHistory, msg.status.Range)
+				m.dsnRangeHistory, m.dsnRangeAt = appendTimedMetricHistory(m.dsnRangeHistory, m.dsnRangeAt, msg.status.Range, sampleTime, maxMetricHistory)
 			}
 			if msg.status.RTLT > 0 {
-				m.rtltHistory = appendMetricHistory(m.rtltHistory, msg.status.RTLT)
+				m.rtltHistory, m.rtltAt = appendTimedMetricHistory(m.rtltHistory, m.rtltAt, msg.status.RTLT, sampleTime, maxMetricHistory)
 			}
 			if rate := activeDSNRate(msg.status); rate > 0 {
-				m.dsnRateHistory = appendMetricHistory(m.dsnRateHistory, rate)
+				m.dsnRateHistory, m.dsnRateAt = appendTimedMetricHistory(m.dsnRateHistory, m.dsnRateAt, rate, sampleTime, maxMetricHistory)
 			}
+			_ = saveDefaultDSNHistory(dsnHistoryState{
+				rangeValues: m.dsnRangeHistory,
+				rangeTimes:  m.dsnRangeAt,
+				rtltValues:  m.rtltHistory,
+				rtltTimes:   m.rtltAt,
+				rateValues:  m.dsnRateHistory,
+				rateTimes:   m.dsnRateAt,
+			})
+		}
+		m.buildCache()
+
+	case horizonsHistoryMsg:
+		if msg.err == nil && len(msg.states) > 0 {
+			var positions []horizons.Vector3
+			var speeds []float64
+			var radial []float64
+			for _, state := range msg.states {
+				positions = append(positions, state.Position)
+				speeds = append(speeds, state.Speed)
+				if value, ok := radialVelocity(state.Position, state.Velocity); ok {
+					radial = append(radial, value)
+				}
+			}
+			m.positionTrail = mergeVectorHistory(trimVectorHistory(positions, maxPositionTrail), m.positionTrail, maxPositionTrail)
+			m.speedHistory = mergeFloatHistory(speeds, m.speedHistory, maxSpeedHistory)
+			m.radialHistory = mergeFloatHistory(radial, m.radialHistory, maxMetricHistory)
 		}
 		m.buildCache()
 
@@ -555,6 +605,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.windDensityHistory = appendMetricHistory(m.windDensityHistory, msg.status.WindDensity)
 			m.windTempHistory = appendMetricHistory(m.windTempHistory, msg.status.WindTemp)
 			m.protonFluxHistory = appendMetricHistory(m.protonFluxHistory, msg.status.ProtonFlux10MeV)
+		}
+		m.buildCache()
+
+	case swHistoryMsg:
+		if msg.err == nil && msg.history != nil {
+			m.kpHistory = mergeFloatHistory(msg.history.Kp, m.kpHistory, maxMetricHistory)
+			m.bzHistory = mergeFloatHistory(msg.history.Bz, m.bzHistory, maxMetricHistory)
+			m.btHistory = mergeFloatHistory(msg.history.Bt, m.btHistory, maxMetricHistory)
+			m.windSpeedHistory = mergeFloatHistory(msg.history.WindSpeed, m.windSpeedHistory, maxMetricHistory)
+			m.windDensityHistory = mergeFloatHistory(msg.history.WindDensity, m.windDensityHistory, maxMetricHistory)
+			m.windTempHistory = mergeFloatHistory(msg.history.WindTemp, m.windTempHistory, maxMetricHistory)
+			m.protonFluxHistory = mergeFloatHistory(msg.history.ProtonFlux10MeV, m.protonFluxHistory, maxMetricHistory)
 		}
 		m.buildCache()
 
@@ -724,6 +786,18 @@ func appendMetricHistory(history []float64, value float64) []float64 {
 		history = history[len(history)-maxMetricHistory:]
 	}
 	return history
+}
+
+func trimVectorHistory(history []horizons.Vector3, limit int) []horizons.Vector3 {
+	if limit <= 0 || len(history) == 0 {
+		return nil
+	}
+	if len(history) > limit {
+		history = history[len(history)-limit:]
+	}
+	out := make([]horizons.Vector3, len(history))
+	copy(out, history)
+	return out
 }
 
 func activeDSNRate(status *dsn.Status) float64 {
@@ -975,6 +1049,13 @@ func fetchHorizons(client *horizons.Client) tea.Cmd {
 	}
 }
 
+func fetchHorizonsHistory(client *horizons.Client) tea.Cmd {
+	return func() tea.Msg {
+		states, err := client.FetchRecentHistory(time.Now().UTC(), historyBootstrapSize, historyBootstrapSpacing)
+		return horizonsHistoryMsg{states: states, err: err}
+	}
+}
+
 func fetchHorizonPath(client *horizons.Client) tea.Cmd {
 	return func() tea.Msg {
 		start, stop := trajectoryPathWindow(time.Now())
@@ -1005,6 +1086,13 @@ func fetchSW(client *spaceweather.Client) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Fetch()
 		return swMsg{status: status, err: err}
+	}
+}
+
+func fetchSpaceWeatherHistory(client *spaceweather.Client) tea.Cmd {
+	return func() tea.Msg {
+		history, err := client.FetchTrendHistory(maxMetricHistory)
+		return swHistoryMsg{history: history, err: err}
 	}
 }
 

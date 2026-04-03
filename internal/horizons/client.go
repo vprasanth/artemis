@@ -122,6 +122,19 @@ func (c *Client) FetchTrajectoryPath(start, stop time.Time, step time.Duration) 
 	return points, nil
 }
 
+func (c *Client) FetchRecentHistory(end time.Time, count int, step time.Duration) ([]State, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	if step <= 0 {
+		step = time.Minute
+	}
+
+	end = end.UTC()
+	start := end.Add(-time.Duration(count-1) * step)
+	return c.fetchVectorSeries(start, end, step, "500@399")
+}
+
 func (c *Client) fetchVectors(target time.Time, center string) (*State, error) {
 	start := target.Add(-1 * time.Minute)
 	stop := target.Add(1 * time.Minute)
