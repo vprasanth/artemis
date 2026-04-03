@@ -21,6 +21,8 @@ const (
 	maxPositionTrail     = 12
 	maxMetricHistory     = 24
 	trajectoryPathSample = 30 * time.Minute
+	uiTickInterval       = 1 * time.Second
+	sizeProbeInterval    = 5 * time.Second
 )
 
 type tickMsg time.Time
@@ -48,6 +50,12 @@ type swMsg struct {
 type blogMsg struct {
 	status *nasablog.Status
 	err    error
+}
+
+type blogPostMsg struct {
+	id   int
+	post *nasablog.Post
+	err  error
 }
 
 type openBrowserMsg struct{ err error }
@@ -100,6 +108,19 @@ type Model struct {
 	selectedLogEntry int
 	blogPrimed       bool
 	lastSeenBlogID   int
+	blogPostCache    map[int]*nasablog.Post
+	blogPostErr      error
+	blogPostLoading  bool
+	blogReaderOpen   bool
+	blogReaderScroll int
+
+	kpHistory          []float64
+	bzHistory          []float64
+	btHistory          []float64
+	windSpeedHistory   []float64
+	windDensityHistory []float64
+	windTempHistory    []float64
+	protonFluxHistory  []float64
 
 	lastDSNFetch         time.Time
 	lastHorizonFetch     time.Time
@@ -144,6 +165,7 @@ func NewModel() Model {
 		hzPathLoading:        true,
 		startedAt:            time.Now(),
 		notifier:             nativeNotifyCmd,
+		blogPostCache:        make(map[int]*nasablog.Post),
 	}
 }
 
@@ -161,6 +183,9 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.blogReaderOpen {
+			return m.updateBlogReader(msg)
+		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
@@ -184,7 +209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.debugPhaseNotificationCmd()
 			}
 		case "v":
-			m.trajectoryView = (m.trajectoryView + 1) % 3
+			m.trajectoryView = (m.trajectoryView + 1) % 5
 			m.buildCache()
 		case "f":
 			m.visualizationFullscreen = !m.visualizationFullscreen
@@ -231,11 +256,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.buildCache()
 			}
 		case "enter":
-			if m.blogStatus != nil && m.selectedLogEntry < len(m.blogStatus.Entries) {
-				link := m.blogStatus.Entries[m.selectedLogEntry].Link
-				if link != "" {
-					return m, openBrowserCmd(link)
+			if entry, ok := m.selectedBlogEntry(); ok {
+				m.blogReaderOpen = true
+				m.blogReaderScroll = 0
+				m.blogPostErr = nil
+				if _, cached := m.blogPostCache[entry.ID]; cached {
+					return m, nil
 				}
+				if !m.blogPostLoading {
+					m.blogPostLoading = true
+					return m, fetchBlogPost(m.blogClient, entry.ID)
+				}
+			}
+		case "o":
+			if entry, ok := m.selectedBlogEntry(); ok && entry.Link != "" {
+				return m, openBrowserCmd(entry.Link)
 			}
 		}
 
@@ -259,17 +294,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Directly query terminal size to catch tmux pane resizes
 		// that may not trigger SIGWINCH / WindowSizeMsg.
-		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-			if w != m.width || h != m.height {
-				m.width = w
-				m.height = h
-				m.buildCache()
+		if m.shouldProbeTerminalSize() {
+			if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+				if w != m.width || h != m.height {
+					m.width = w
+					m.height = h
+					m.buildCache()
+				}
 			}
 		}
 
-		// Re-render trajectory every tick for animation (stars twinkle, spacecraft pulse).
 		if m.layout != nil {
-			if pl := m.layout[panelTrajectory]; pl.visible {
+			if pl := m.layout[panelTrajectory]; pl.visible && m.shouldRefreshVisualizationOnTick() {
 				m.cachedTrajectory = m.renderCachedTrajectoryPanel(pl.height)
 			}
 			if pl := m.layout[panelTimeline]; pl.visible {
@@ -370,6 +406,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.swStatus = msg.status
 			m.swErr = nil
+			m.kpHistory = appendMetricHistory(m.kpHistory, msg.status.Kp)
+			m.bzHistory = appendMetricHistory(m.bzHistory, msg.status.Bz)
+			m.btHistory = appendMetricHistory(m.btHistory, msg.status.Bt)
+			m.windSpeedHistory = appendMetricHistory(m.windSpeedHistory, msg.status.WindSpeed)
+			m.windDensityHistory = appendMetricHistory(m.windDensityHistory, msg.status.WindDensity)
+			m.windTempHistory = appendMetricHistory(m.windTempHistory, msg.status.WindTemp)
+			m.protonFluxHistory = appendMetricHistory(m.protonFluxHistory, msg.status.ProtonFlux10MeV)
 		}
 		m.buildCache()
 
@@ -399,6 +442,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buildCache()
 		return m, notifyCmd
 
+	case blogPostMsg:
+		m.blogPostLoading = false
+		if msg.err != nil {
+			m.blogPostErr = msg.err
+		} else if msg.post != nil {
+			if m.blogPostCache == nil {
+				m.blogPostCache = make(map[int]*nasablog.Post)
+			}
+			m.blogPostCache[msg.id] = msg.post
+			m.blogPostErr = nil
+		}
+
 	case openBrowserMsg:
 		// Silently consume browser result.
 
@@ -410,6 +465,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) updateBlogReader(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.blogReaderOpen = false
+		m.blogReaderScroll = 0
+		m.blogPostErr = nil
+		return m, nil
+	case "j", "down":
+		m.blogReaderScroll++
+	case "k", "up":
+		if m.blogReaderScroll > 0 {
+			m.blogReaderScroll--
+		}
+	case "pgdown", "space":
+		m.blogReaderScroll += m.blogReaderPageStep()
+	case "pgup":
+		m.blogReaderScroll -= m.blogReaderPageStep()
+		if m.blogReaderScroll < 0 {
+			m.blogReaderScroll = 0
+		}
+	case "g":
+		m.blogReaderScroll = 0
+	case "G":
+		m.blogReaderScroll = 1 << 20
+	case "o":
+		if entry, ok := m.selectedBlogEntry(); ok && entry.Link != "" {
+			return m, openBrowserCmd(entry.Link)
+		}
+	case "r":
+		if entry, ok := m.selectedBlogEntry(); ok && !m.blogPostLoading {
+			m.blogPostLoading = true
+			return m, fetchBlogPost(m.blogClient, entry.ID)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) selectedBlogEntry() (nasablog.Entry, bool) {
+	if m.blogStatus == nil || m.selectedLogEntry < 0 || m.selectedLogEntry >= len(m.blogStatus.Entries) {
+		return nasablog.Entry{}, false
+	}
+	return m.blogStatus.Entries[m.selectedLogEntry], true
+}
+
+func (m Model) blogReaderPageStep() int {
+	step := m.height / 2
+	if step < 4 {
+		step = 4
+	}
+	return step
 }
 
 func appendMetricHistory(history []float64, value float64) []float64 {
@@ -628,8 +737,29 @@ func (m Model) renderCachedTimelinePanel(w int) string {
 	return renderTimelinePanelAt(w, mission.MET())
 }
 
+func (m Model) shouldRefreshVisualizationOnTick() bool {
+	if m.visualizationFullscreen {
+		return true
+	}
+
+	switch m.trajectoryView {
+	case 0, 1:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) shouldProbeTerminalSize() bool {
+	intervalTicks := int(sizeProbeInterval / uiTickInterval)
+	if intervalTicks <= 1 {
+		return true
+	}
+	return m.tickCount%uint64(intervalTicks) == 0
+}
+
 func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(uiTickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -685,6 +815,13 @@ func fetchBlog(client *nasablog.Client) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Fetch()
 		return blogMsg{status: status, err: err}
+	}
+}
+
+func fetchBlogPost(client *nasablog.Client, id int) tea.Cmd {
+	return func() tea.Msg {
+		post, err := client.FetchPost(id)
+		return blogPostMsg{id: id, post: post, err: err}
 	}
 }
 

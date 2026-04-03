@@ -159,8 +159,14 @@ func NextEvent(met time.Duration) *Event {
 }
 
 func MissionProgress() float64 {
-	met := MET()
+	return MissionProgressAt(MET())
+}
+
+func MissionProgressAt(met time.Duration) float64 {
 	totalDuration := TotalDuration()
+	if totalDuration <= 0 {
+		return 0
+	}
 	progress := float64(met) / float64(totalDuration)
 	if progress < 0 {
 		return 0

@@ -9,6 +9,8 @@
 - Short instrument trend graphs for Earth radial velocity, DSN range, RTLT, and downlink rate
 - Runtime unit toggle for switching the dashboard between metric and imperial telemetry
 - Trajectory Sun-direction marker for quick orientation in the Earth-centered plot
+- In-app mission log reader with excerpt fallback, full-post fetch, scrolling controls, and browser fallback
+- `DSN SKY` and `WEATHER TRENDS` visualization views for tracking geometry and solar-wind / geomagnetic trends
 - `RELEASE.md` documenting the manual release workflow
 
 ### Changed
@@ -17,6 +19,7 @@
 - Instruments view now uses a wider split layout, clearer scope labels, and additional derived telemetry to better use available space
 - Spacecraft state, instruments, trajectory labels, orbital labels, DSN range text, and solar-wind speed now follow the selected unit system
 - Mission clock and Gantt panels now derive mission day totals from the actual timeline data instead of hard-coded day counts
+- The header mission-progress line now uses the same timeline-derived mission progress math as the clock and Gantt views
 - `make changefile TAG=...` now generates changelog entries from the latest tag through `HEAD`, and the old `make tag` helper has been removed
 
 ### Fixed
@@ -24,6 +27,8 @@
 - Gantt/timeline caching drift so live mission timing indicators now refresh on tick
 - Trajectory path visibility, compact distance formatting, and path legends (`away` / `return`) for clearer interpretation
 - Proximity scope Moon bearing and Horizons sample selection so visualizations better match the underlying data source
+- Fullscreen `DSN SKY` and `WEATHER TRENDS` panel sizing so borders fill cleanly without leaving a blank strip below the footer
+- Long-running dashboard overhead by reducing unnecessary tick-time rerenders and terminal size probes for static views
 
 ## v0.6.0
 

@@ -12,6 +12,7 @@ import (
 	"artemis/internal/horizons"
 	"artemis/internal/mission"
 	"artemis/internal/nasablog"
+	"artemis/internal/spaceweather"
 )
 
 type notificationCall struct {
@@ -244,6 +245,59 @@ func TestUpdateTogglesUnits(t *testing.T) {
 	}
 }
 
+func TestEnterOpensBlogReaderAndFetchesPost(t *testing.T) {
+	m := Model{
+		blogClient: nasablog.NewClient(),
+		blogStatus: &nasablog.Status{
+			Entries: []nasablog.Entry{{ID: 42, Title: "Flight Day 2", Link: "https://example.test/post"}},
+		},
+	}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("expected enter to trigger blog post fetch when content is not cached")
+	}
+
+	got := model.(Model)
+	if !got.blogReaderOpen {
+		t.Fatalf("expected enter to open blog reader")
+	}
+	if !got.blogPostLoading {
+		t.Fatalf("expected enter to mark blog post as loading")
+	}
+}
+
+func TestEnterOpensBlogReaderFromCacheWithoutFetch(t *testing.T) {
+	m := Model{
+		blogStatus: &nasablog.Status{
+			Entries: []nasablog.Entry{{ID: 42, Title: "Flight Day 2", Link: "https://example.test/post"}},
+		},
+		blogPostCache: map[int]*nasablog.Post{
+			42: {ID: 42, Title: "Flight Day 2", Content: "Crew wake and systems check."},
+		},
+	}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected cached blog post to open without fetch command")
+	}
+
+	got := model.(Model)
+	if !got.blogReaderOpen {
+		t.Fatalf("expected blog reader to open from cache")
+	}
+}
+
+func TestBlogReaderEscapeClosesReader(t *testing.T) {
+	model, cmd := Model{blogReaderOpen: true}.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected esc to close reader without command")
+	}
+	if model.(Model).blogReaderOpen {
+		t.Fatalf("expected esc to close blog reader")
+	}
+}
+
 func TestUpdateStoresTransientNotificationFailure(t *testing.T) {
 	model, cmd := Model{}.Update(notificationResultMsg{err: errors.New("notify backend unavailable")})
 
@@ -367,6 +421,34 @@ func TestUpdateTracksHorizonsAndDSNMetricHistories(t *testing.T) {
 	}
 }
 
+func TestUpdateTracksSpaceWeatherHistories(t *testing.T) {
+	model, cmd := Model{}.Update(swMsg{
+		status: &spaceweather.Status{
+			Kp:              4,
+			Bz:              -5.5,
+			Bt:              7.2,
+			WindSpeed:       510,
+			WindDensity:     8.3,
+			WindTemp:        120000,
+			ProtonFlux10MeV: 1.25,
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for space weather update")
+	}
+
+	got := model.(Model)
+	if len(got.kpHistory) != 1 || got.kpHistory[0] != 4 {
+		t.Fatalf("unexpected kp history: %#v", got.kpHistory)
+	}
+	if len(got.windDensityHistory) != 1 || got.windDensityHistory[0] != 8.3 {
+		t.Fatalf("unexpected wind density history: %#v", got.windDensityHistory)
+	}
+	if len(got.protonFluxHistory) != 1 || got.protonFluxHistory[0] != 1.25 {
+		t.Fatalf("unexpected proton history: %#v", got.protonFluxHistory)
+	}
+}
+
 func TestTrajectoryPathWindowClampsToFlownMissionSpan(t *testing.T) {
 	start, stop := trajectoryPathWindow(mission.LaunchTime.Add(25 * time.Hour))
 	if !start.Equal(mission.LaunchTime.UTC()) {
@@ -410,5 +492,38 @@ func TestTickRefreshesCachedTimeline(t *testing.T) {
 
 	if got.cachedTimeline == before {
 		t.Fatalf("expected tick to refresh cached timeline when MET changes")
+	}
+}
+
+func TestShouldRefreshVisualizationOnTick(t *testing.T) {
+	tests := []struct {
+		name string
+		m    Model
+		want bool
+	}{
+		{name: "trajectory view animates", m: Model{trajectoryView: 0}, want: true},
+		{name: "orbital view animates", m: Model{trajectoryView: 1}, want: true},
+		{name: "instruments view static", m: Model{trajectoryView: 2}, want: false},
+		{name: "dsn sky static", m: Model{trajectoryView: 3}, want: false},
+		{name: "weather trends static", m: Model{trajectoryView: 4}, want: false},
+		{name: "fullscreen forces refresh", m: Model{trajectoryView: 4, visualizationFullscreen: true}, want: true},
+	}
+
+	for _, tc := range tests {
+		if got := tc.m.shouldRefreshVisualizationOnTick(); got != tc.want {
+			t.Fatalf("%s: shouldRefreshVisualizationOnTick() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestShouldProbeTerminalSize(t *testing.T) {
+	m := Model{tickCount: 1}
+	if m.shouldProbeTerminalSize() {
+		t.Fatalf("expected non-interval tick count to skip terminal size probe")
+	}
+
+	m.tickCount = uint64(sizeProbeInterval / uiTickInterval)
+	if !m.shouldProbeTerminalSize() {
+		t.Fatalf("expected terminal size probe at configured interval")
 	}
 }

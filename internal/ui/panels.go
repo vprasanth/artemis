@@ -11,6 +11,7 @@ import (
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
 	"artemis/internal/mission"
+	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
 )
 
@@ -34,6 +35,17 @@ func (m Model) View() string {
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
+
+	if m.blogReaderOpen {
+		availableH := m.height - measureHeight(header) - 1
+		if availableH < 6 {
+			availableH = 6
+		}
+		reader := renderMissionLogReader(m, w, availableH)
+		help := renderFooter(m, w)
+		result := lipgloss.JoinVertical(lipgloss.Left, header, reader, help)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, result)
+	}
 
 	var sections []string
 	sections = append(sections, header)
@@ -72,6 +84,10 @@ func (m Model) View() string {
 }
 
 func renderFooter(m Model, w int) string {
+	if m.blogReaderOpen {
+		return renderBlogReaderFooter(m, w)
+	}
+
 	theme := ThemeName()
 	hiddenWide := hiddenPanelSummary(m, false)
 	hiddenCompact := hiddenPanelSummary(m, true)
@@ -157,6 +173,22 @@ func renderFooter(m Model, w int) string {
 		),
 		joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
 		fmt.Sprintf("%dx%d", m.width, m.height),
+	}
+
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= w {
+			return helpStyle.Width(w).Align(lipgloss.Center).Render(candidate)
+		}
+	}
+
+	return helpStyle.Width(w).Align(lipgloss.Center).Render(candidates[len(candidates)-1])
+}
+
+func renderBlogReaderFooter(m Model, w int) string {
+	candidates := []string{
+		joinFooterParts("esc close", "j/k scroll", "pgup/pgdn page", "g/G top/end", "o browser", "r reload", "q quit"),
+		joinFooterParts("esc", "j/k", "pgup/pgdn", "g/G", "o", "r", "q"),
+		joinFooterParts("esc", "scroll", "o", "q"),
 	}
 
 	for _, candidate := range candidates {
@@ -255,8 +287,15 @@ func joinFooterParts(parts ...string) string {
 }
 
 func renderHeader(w int) string {
-	progress := mission.MissionProgress()
+	return renderHeaderAt(w, mission.MET())
+}
+
+func renderHeaderAt(w int, met time.Duration) string {
+	progress := mission.MissionProgressAt(met)
 	barWidth := w - 4
+	if barWidth < 0 {
+		barWidth = 0
+	}
 	filled := int(progress * float64(barWidth))
 	if filled < 0 {
 		filled = 0
@@ -523,17 +562,22 @@ func renderVisualizationPanel(m Model, w, plotH int, fullscreen bool) string {
 	if plotW < 30 {
 		plotW = 30
 	}
+	if plotH < 0 {
+		plotH = 0
+	}
 
 	title, legend := visualizationMeta(m, fullscreen)
-	plot := renderVisualizationBody(m, plotW, plotH)
+	plot := fitBlockHeight(renderVisualizationBody(m, plotW, plotH), plotH)
 	body := plot
+	bodyHeight := plotH
 
 	if fullscreen {
 		topRow := renderTopRow(m, plotW)
 		body = lipgloss.JoinVertical(lipgloss.Left, plot, topRow)
+		bodyHeight += measureHeight(topRow)
 	}
 
-	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Height(1 + bodyHeight).Render(
 		panelTitleStyle.Render(title) + "  " + legend + "\n" + body,
 	)
 }
@@ -544,6 +588,10 @@ func renderVisualizationBody(m Model, plotW, plotH int) string {
 		return renderOrbitalMap(m, plotW, plotH)
 	case 2:
 		return renderInstruments(m, plotW, plotH)
+	case 3:
+		return renderDSNSky(m, plotW, plotH)
+	case 4:
+		return renderWeatherTrends(m, plotW, plotH)
 	default:
 		return renderTrajectory(m, plotW, plotH)
 	}
@@ -565,6 +613,12 @@ func visualizationMeta(m Model, fullscreen bool) (string, string) {
 	case 2:
 		legend := dimStyle.Render("v: switch view") + fullscreenHint
 		return "INSTRUMENTS", legend
+	case 3:
+		legend := dimStyle.Render("dish tracks  v: switch view") + fullscreenHint
+		return "DSN SKY", legend
+	case 4:
+		legend := dimStyle.Render("solar wind + geomag trends  v: switch view") + fullscreenHint
+		return "WEATHER TRENDS", legend
 	default:
 		legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
 			moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
@@ -932,6 +986,146 @@ func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) stri
 	content := strings.Join(lines, "\n")
 	return panelStyle.Width(w - 2).Render(
 		panelTitleStyle.Render("MISSION LOG") +
-			"  " + dimStyle.Render("j/k: select  enter: open") + "\n" + content,
+			"  " + dimStyle.Render("j/k: select  enter: read  o: browser") + "\n" + content,
 	)
+}
+
+func renderMissionLogReader(m Model, w, totalHeight int) string {
+	entry, ok := m.selectedBlogEntry()
+	if !ok {
+		return panelStyle.Width(w - 2).Height(maxInt(0, totalHeight-2)).Render(
+			panelTitleStyle.Render("MISSION LOG READER") + "\n" + dimStyle.Render("No mission log entry selected."),
+		)
+	}
+
+	post := m.blogPostCache[entry.ID]
+	contentLines := buildMissionLogReaderLines(entry, post, m.blogPostLoading, m.blogPostErr, innerWidthFor(panelStyle, w))
+	bodyH := totalHeight - panelStyle.GetVerticalBorderSize() - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	maxScroll := 0
+	if len(contentLines) > bodyH {
+		maxScroll = len(contentLines) - bodyH
+	}
+	scroll := m.blogReaderScroll
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + bodyH
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+	visible := contentLines[scroll:end]
+	for len(visible) < bodyH {
+		visible = append(visible, "")
+	}
+
+	title := panelTitleStyle.Render("MISSION LOG READER")
+	status := dimStyle.Render(fmt.Sprintf("%s  %s", entry.Time.UTC().Format("2006-01-02 15:04Z"), blogReaderProgress(scroll, maxScroll)))
+
+	return panelStyle.Width(w - 2).Height(maxInt(0, totalHeight-2)).Render(
+		title + "  " + status + "\n" + strings.Join(visible, "\n"),
+	)
+}
+
+func buildMissionLogReaderLines(entry nasablog.Entry, post *nasablog.Post, loading bool, fetchErr error, width int) []string {
+	if width < 20 {
+		width = 20
+	}
+
+	var sections []string
+	sections = append(sections, wrapText(entry.Title, width)...)
+	sections = append(sections, "")
+	if post != nil && post.Content != "" {
+		sections = append(sections, wrapText(post.Content, width)...)
+	} else {
+		if entry.Excerpt != "" {
+			sections = append(sections, wrapText(entry.Excerpt, width)...)
+			sections = append(sections, "")
+		}
+		switch {
+		case loading:
+			sections = append(sections, "Loading full post...")
+		case fetchErr != nil:
+			sections = append(sections, "Unable to load full post; showing excerpt only.")
+			sections = append(sections, fetchErr.Error())
+		default:
+			sections = append(sections, "Press r to fetch the full post body or o to open the canonical page.")
+		}
+	}
+
+	styled := make([]string, 0, len(sections))
+	for i, line := range sections {
+		switch {
+		case i == 0:
+			styled = append(styled, logSelectedTitleStyle.Render(line))
+		case line == "":
+			styled = append(styled, "")
+		case strings.HasPrefix(line, "Unable to load"):
+			styled = append(styled, errorStyle.Render(line))
+		case strings.HasPrefix(line, "Loading full") || strings.HasPrefix(line, "Press r"):
+			styled = append(styled, dimStyle.Render(line))
+		case fetchErr != nil && line == fetchErr.Error():
+			styled = append(styled, dimStyle.Render(line))
+		default:
+			styled = append(styled, valueStyle.Render(line))
+		}
+	}
+	return styled
+}
+
+func wrapText(text string, width int) []string {
+	if width < 1 {
+		return []string{text}
+	}
+	paragraphs := strings.Split(text, "\n")
+	var lines []string
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			lines = append(lines, "")
+			continue
+		}
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		current := words[0]
+		for _, word := range words[1:] {
+			if lipgloss.Width(current)+1+lipgloss.Width(word) > width {
+				lines = append(lines, current)
+				current = word
+				continue
+			}
+			current += " " + word
+		}
+		for lipgloss.Width(current) > width {
+			runes := []rune(current)
+			cut := width
+			if cut > len(runes) {
+				cut = len(runes)
+			}
+			lines = append(lines, string(runes[:cut]))
+			current = strings.TrimSpace(string(runes[cut:]))
+		}
+		if current != "" {
+			lines = append(lines, current)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func blogReaderProgress(scroll, maxScroll int) string {
+	if maxScroll <= 0 {
+		return "all"
+	}
+	return fmt.Sprintf("%d%%", int(math.Round(float64(scroll)*100/float64(maxScroll))))
 }

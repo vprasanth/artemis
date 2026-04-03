@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type panelID int
 
@@ -97,4 +101,19 @@ func innerWidthFor(style lipgloss.Style, totalWidth int) int {
 func splitWidthEvenly(totalWidth int) (int, int) {
 	left := totalWidth / 2
 	return left, totalWidth - left
+}
+
+func fitBlockHeight(s string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }

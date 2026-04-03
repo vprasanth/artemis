@@ -9,6 +9,8 @@ import (
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
 	"artemis/internal/mission"
+	"artemis/internal/nasablog"
+	"artemis/internal/spaceweather"
 )
 
 func TestRenderInstrumentsCompactHeightKeepsPrimaryTelemetry(t *testing.T) {
@@ -435,6 +437,147 @@ func TestRenderVisualizationPanelFullscreenEmbedsTopRow(t *testing.T) {
 	for _, want := range []string{"MISSION CLOCK", "SPACECRAFT STATE", "f: windowed"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected fullscreen visualization to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderVisualizationPanelSupportsNewViews(t *testing.T) {
+	m := Model{
+		dsnStatus: &dsn.Status{
+			Dishes: []dsn.Dish{{Name: "DSS43", Azimuth: 120, Elevation: 45, Station: "Canberra, AU"}},
+		},
+		swStatus: &spaceweather.Status{
+			Kp:              4,
+			Bz:              -5.2,
+			Bt:              8.1,
+			WindSpeed:       520,
+			WindDensity:     7.4,
+			WindTemp:        110000,
+			ProtonFlux10MeV: 1.2,
+			LatestAlert:     "ALERT: Geomagnetic activity observed",
+		},
+		kpHistory:          []float64{2, 3, 4},
+		bzHistory:          []float64{-2, -3.5, -5.2},
+		windSpeedHistory:   []float64{480, 500, 520},
+		protonFluxHistory:  []float64{0.4, 0.8, 1.2},
+		windDensityHistory: []float64{5.2, 6.1, 7.4},
+	}
+
+	m.trajectoryView = 3
+	if got := renderVisualizationPanel(m, 100, 16, false); !strings.Contains(got, "DSN SKY") {
+		t.Fatalf("expected DSN SKY view title, got:\n%s", got)
+	}
+
+	m.trajectoryView = 4
+	if got := renderVisualizationPanel(m, 100, 16, false); !strings.Contains(got, "WEATHER TRENDS") {
+		t.Fatalf("expected WEATHER TRENDS view title, got:\n%s", got)
+	}
+}
+
+func TestRenderVisualizationPanelFullscreenFillsRequestedHeightForOpsViews(t *testing.T) {
+	m := Model{
+		dsnStatus: &dsn.Status{
+			Dishes: []dsn.Dish{{Name: "DSS43", Azimuth: 120, Elevation: 45, Station: "Canberra, AU"}},
+		},
+		swStatus: &spaceweather.Status{
+			Kp:              4,
+			Bz:              -5.2,
+			Bt:              8.1,
+			WindSpeed:       520,
+			WindDensity:     7.4,
+			WindTemp:        110000,
+			ProtonFlux10MeV: 1.2,
+		},
+		kpHistory:         []float64{2, 3, 4},
+		bzHistory:         []float64{-2, -3.5, -5.2},
+		windSpeedHistory:  []float64{480, 500, 520},
+		protonFluxHistory: []float64{0.4, 0.8, 1.2},
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    time.Now().Add(-8 * time.Second),
+		},
+	}
+
+	const (
+		panelWidth = 100
+		plotHeight = 16
+	)
+
+	topRowHeight := measureHeight(renderTopRow(m, innerWidthFor(panelStyle, panelWidth)))
+	wantHeight := plotHeight + topRowHeight + 1 + panelStyle.GetVerticalBorderSize()
+
+	for _, view := range []int{3, 4} {
+		m.trajectoryView = view
+		if got := measureHeight(renderVisualizationPanel(m, panelWidth, plotHeight, true)); got != wantHeight {
+			t.Fatalf("fullscreen view %d height = %d, want %d", view, got, wantHeight)
+		}
+	}
+}
+
+func TestRenderCachedTrajectoryPanelFillsFullscreenHeightForOpsViews(t *testing.T) {
+	m := Model{
+		width:                   100,
+		height:                  40,
+		visualizationFullscreen: true,
+		dsnStatus: &dsn.Status{
+			Dishes: []dsn.Dish{{Name: "DSS43", Azimuth: 120, Elevation: 45, Station: "Canberra, AU"}},
+		},
+		swStatus: &spaceweather.Status{
+			Kp:              4,
+			Bz:              -5.2,
+			Bt:              8.1,
+			WindSpeed:       520,
+			WindDensity:     7.4,
+			WindTemp:        110000,
+			ProtonFlux10MeV: 1.2,
+		},
+		kpHistory:         []float64{2, 3, 4},
+		bzHistory:         []float64{-2, -3.5, -5.2},
+		windSpeedHistory:  []float64{480, 500, 520},
+		protonFluxHistory: []float64{0.4, 0.8, 1.2},
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    time.Now().Add(-8 * time.Second),
+		},
+	}
+
+	for _, view := range []int{3, 4} {
+		m.trajectoryView = view
+		if got := measureHeight(m.renderCachedTrajectoryPanel(24)); got != 24 {
+			t.Fatalf("cached fullscreen view %d height = %d, want 24", view, got)
+		}
+	}
+}
+
+func TestRenderMissionLogReaderUsesExcerptFallback(t *testing.T) {
+	m := Model{
+		width:          100,
+		height:         30,
+		blogReaderOpen: true,
+		blogStatus: &nasablog.Status{
+			Entries: []nasablog.Entry{{
+				ID:      7,
+				Title:   "Crew Completes TLI Burn",
+				Excerpt: "Orion completed the translunar injection burn and configured for coast.",
+			}},
+		},
+		blogPostCache: make(map[int]*nasablog.Post),
+	}
+
+	got := renderMissionLogReader(m, 100, 20)
+	for _, want := range []string{"MISSION LOG READER", "Crew Completes TLI Burn", "translunar injection burn"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected mission log reader to include %q, got:\n%s", want, got)
 		}
 	}
 }

@@ -21,3 +21,17 @@ func TestTotalMissionDaysMatchesTimelineDuration(t *testing.T) {
 		t.Fatalf("TotalMissionDays() = %d, want 10", got)
 	}
 }
+
+func TestMissionProgressAtTracksTimelineSpan(t *testing.T) {
+	if got := MissionProgressAt(-6 * time.Hour); got != 0 {
+		t.Fatalf("MissionProgressAt(prelaunch) = %v, want 0", got)
+	}
+
+	if got := MissionProgressAt(TotalDuration() / 2); got != 0.5 {
+		t.Fatalf("MissionProgressAt(halfway) = %v, want 0.5", got)
+	}
+
+	if got := MissionProgressAt(TotalDuration() + 48*time.Hour); got != 1 {
+		t.Fatalf("MissionProgressAt(post-mission) = %v, want 1", got)
+	}
+}
