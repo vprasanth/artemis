@@ -2,8 +2,9 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 LDFLAGS  = -X main.version=$(VERSION)
 BINARY   = artemis
 CHANGELOG_FILE ?= CHANGELOG.md
+RELEASE_COMMIT_MSG ?= Prepare $(TAG) release
 
-.PHONY: build run clean release changelog changefile
+.PHONY: build run clean release changelog changefile release-prep
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./main.go
@@ -49,6 +50,27 @@ changefile:
 	} > "$$TMP"; \
 	mv "$$TMP" "$$FILE"; \
 	echo "Updated $$FILE for $$TARGET"
+
+release-prep:
+	@if [ -z "$(TAG)" ]; then \
+		echo "TAG is required, for example: make release-prep TAG=v0.7.0"; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "Working tree must be clean before release prep"; \
+		git status --short; \
+		exit 1; \
+	fi
+	go test ./...
+	@$(MAKE) changefile TAG=$(TAG)
+	@git add $(CHANGELOG_FILE)
+	@if git diff --cached --quiet; then \
+		echo "No release prep changes staged for $(TAG)"; \
+		exit 1; \
+	fi
+	git commit -m "$(RELEASE_COMMIT_MSG)"
+	@echo "Release prep committed for $(TAG)"
+	@echo "Next: git tag -a $(TAG) -m \"$(TAG)\" && make release && git push origin main && git push origin $(TAG)"
 
 release: clean
 	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-arm64  ./main.go
