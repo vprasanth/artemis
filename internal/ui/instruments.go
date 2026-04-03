@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"artemis/internal/horizons"
 )
 
 const instrumentScopeXScale = 3
@@ -565,7 +567,8 @@ func renderProximityScopeCanvas(m Model, radius int) [][]string {
 
 	// Plot Moon at relative bearing/distance
 	if m.hzState != nil && m.hzState.MoonDist > 0 {
-		moonBearing := math.Atan2(m.hzState.MoonPosition.Y, m.hzState.MoonPosition.X)
+		moonVector := moonRelativeVector(m.hzState.MoonPosition)
+		moonBearing := math.Atan2(moonVector.Y, moonVector.X)
 		normDist := m.hzState.MoonDist / 500000.0
 		if normDist > 1 {
 			normDist = 1
@@ -581,6 +584,14 @@ func renderProximityScopeCanvas(m Model, radius int) [][]string {
 	}
 
 	return scope
+}
+
+func moonRelativeVector(moonPosition horizons.Vector3) horizons.Vector3 {
+	return horizons.Vector3{
+		X: -moonPosition.X,
+		Y: -moonPosition.Y,
+		Z: -moonPosition.Z,
+	}
 }
 
 // minAvgMax returns the min, average, and max of a slice.

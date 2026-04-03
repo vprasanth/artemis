@@ -492,21 +492,12 @@ func renderTimelinePanel(w int) string {
 }
 
 func renderTrajectoryPanel(m Model, w int, plotH int) string {
-	earthDist := 0.0
-	moonDist := 0.0
-	occluded := false
-	if m.hzState != nil {
-		earthDist = m.hzState.EarthDist
-		moonDist = m.hzState.MoonDist
-		occluded = m.hzState.IsOccluded()
-	}
-
 	plotW := innerWidthFor(panelStyle, w)
 	if plotW < 30 {
 		plotW = 30
 	}
 
-	plot := renderTrajectory(earthDist, moonDist, plotW, plotH, m.tickCount, m.showStars, occluded)
+	plot := renderTrajectory(m, plotW, plotH)
 
 	legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
 		moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
@@ -605,8 +596,14 @@ func eclipticCoords(position horizons.Vector3) (float64, float64, bool) {
 func formatStateAge(m Model, now time.Time) string {
 	parts := make([]string, 0, 2)
 
-	if m.hzState != nil && !m.hzState.Timestamp.IsZero() {
-		parts = append(parts, valueStyle.Render("HZ "+formatDataAge(now.Sub(m.hzState.Timestamp))))
+	if m.hzState != nil {
+		hzTime := m.hzState.Time
+		if hzTime.IsZero() {
+			hzTime = m.hzState.Timestamp
+		}
+		if !hzTime.IsZero() {
+			parts = append(parts, valueStyle.Render("HZ "+formatDataAge(now.Sub(hzTime))))
+		}
 	}
 	if m.dsnStatus != nil && !m.dsnStatus.Timestamp.IsZero() {
 		parts = append(parts, valueStyle.Render("DSN "+formatDataAge(now.Sub(m.dsnStatus.Timestamp))))

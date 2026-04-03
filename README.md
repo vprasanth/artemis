@@ -53,7 +53,7 @@ The dashboard shows panels based on available terminal height, in priority order
 4. **Deep Space Network** -- active dishes, signal bands, data rates, range
 5. **Mission Timeline** -- Gantt chart or scrolling event list with 25 mission events
 6. **Mission Log** -- latest NASA blog posts with selection and browser opening
-7. **Trajectory** -- ASCII art Earth-to-Moon trajectory with twinkling stars and pulsing spacecraft (turns red during LOS)
+7. **Trajectory** -- live Horizons-projected Earth-Moon transfer frame with recent trail, twinkling stars, and pulsing spacecraft (turns red during LOS)
 8. **Crew** -- the four [Artemis II astronauts](https://www.nasa.gov/feature/our-artemis-crew/) and their roles
 
 ## Data Refresh Rates

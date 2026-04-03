@@ -25,14 +25,14 @@ func (v Vector3) Magnitude() float64 {
 }
 
 type State struct {
-	Time          time.Time
-	Position      Vector3
-	Velocity      Vector3
-	MoonPosition  Vector3
-	EarthDist     float64
-	MoonDist      float64
-	Speed         float64
-	Timestamp     time.Time
+	Time         time.Time
+	Position     Vector3
+	Velocity     Vector3
+	MoonPosition Vector3
+	EarthDist    float64
+	MoonDist     float64
+	Speed        float64
+	Timestamp    time.Time
 }
 
 // IsOccluded returns true when the Moon blocks line-of-sight from Earth to
@@ -91,15 +91,12 @@ func NewClient() *Client {
 
 func (c *Client) Fetch() (*State, error) {
 	now := time.Now().UTC()
-	start := now.Add(-1 * time.Minute)
-	stop := now.Add(1 * time.Minute)
-
-	earthState, err := c.fetchVectors(start, stop, "500@399")
+	earthState, err := c.fetchVectors(now, "500@399")
 	if err != nil {
 		return nil, fmt.Errorf("horizons earth-centered: %w", err)
 	}
 
-	moonState, err := c.fetchVectors(start, stop, "500@301")
+	moonState, err := c.fetchVectors(now, "500@301")
 	if err != nil {
 		earthState.MoonDist = -1
 		earthState.Timestamp = time.Now().UTC()
@@ -112,7 +109,10 @@ func (c *Client) Fetch() (*State, error) {
 	return earthState, nil
 }
 
-func (c *Client) fetchVectors(start, stop time.Time, center string) (*State, error) {
+func (c *Client) fetchVectors(target time.Time, center string) (*State, error) {
+	start := target.Add(-1 * time.Minute)
+	stop := target.Add(1 * time.Minute)
+
 	params := url.Values{}
 	params.Set("format", "text")
 	params.Set("COMMAND", "'"+SpacecraftID+"'")
@@ -137,12 +137,12 @@ func (c *Client) fetchVectors(start, stop time.Time, center string) (*State, err
 		return nil, fmt.Errorf("horizons read: %w", err)
 	}
 
-	return parseVectors(string(body))
+	return parseVectors(string(body), target)
 }
 
 var soeRegex = regexp.MustCompile(`(?s)\$\$SOE\s*\n(.*?)\n\s*\$\$EOE`)
 
-func parseVectors(text string) (*State, error) {
+func parseVectors(text string, target time.Time) (*State, error) {
 	matches := soeRegex.FindStringSubmatch(text)
 	if len(matches) < 2 {
 		return nil, fmt.Errorf("no ephemeris data found between $$SOE and $$EOE")
@@ -151,29 +151,46 @@ func parseVectors(text string) (*State, error) {
 	block := strings.TrimSpace(matches[1])
 	lines := strings.Split(block, "\n")
 
-	// Take the first data point. Format:
+	// Each sample is three logical lines:
 	// 2461132.916666667 = A.D. 2026-Apr-02 10:00:00.0000 TDB
 	//  X = ... Y = ... Z = ...
 	//  VX= ... VY= ... VZ= ...
+	var (
+		bestSample *State
+		bestDelta  time.Duration
+	)
 
-	if len(lines) < 3 {
-		return nil, fmt.Errorf("insufficient lines in ephemeris data")
+	for i := 0; i+2 < len(lines); i++ {
+		timeLine := strings.TrimSpace(lines[i])
+		if !strings.Contains(timeLine, "A.D.") {
+			continue
+		}
+
+		sampleTime, err := parseEphemerisTime(timeLine)
+		if err != nil {
+			continue
+		}
+
+		state := &State{
+			Time:     sampleTime,
+			Position: parseXYZ(lines[i+1], "X", "Y", "Z"),
+			Velocity: parseXYZ(lines[i+2], "VX", "VY", "VZ"),
+		}
+		state.EarthDist = state.Position.Magnitude()
+		state.Speed = state.Velocity.Magnitude()
+
+		delta := absDuration(sampleTime.Sub(target))
+		if bestSample == nil || delta < bestDelta {
+			bestSample = state
+			bestDelta = delta
+		}
 	}
 
-	state := &State{}
+	if bestSample == nil {
+		return nil, fmt.Errorf("no parseable ephemeris samples found")
+	}
 
-	// Parse position line
-	posLine := lines[1]
-	state.Position = parseXYZ(posLine, "X", "Y", "Z")
-
-	// Parse velocity line
-	velLine := lines[2]
-	state.Velocity = parseXYZ(velLine, "VX", "VY", "VZ")
-
-	state.EarthDist = state.Position.Magnitude()
-	state.Speed = state.Velocity.Magnitude()
-
-	return state, nil
+	return bestSample, nil
 }
 
 func parseXYZ(line, xKey, yKey, zKey string) Vector3 {
@@ -193,4 +210,24 @@ func extractValue(line, key string) float64 {
 	}
 	val, _ := strconv.ParseFloat(match[1], 64)
 	return val
+}
+
+func parseEphemerisTime(line string) (time.Time, error) {
+	parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+	if len(parts) != 2 {
+		return time.Time{}, fmt.Errorf("invalid ephemeris time line: %q", line)
+	}
+
+	timestamp := strings.TrimSpace(parts[1])
+	timestamp = strings.TrimPrefix(timestamp, "A.D. ")
+	timestamp = strings.TrimSuffix(timestamp, " TDB")
+
+	return time.ParseInLocation("2006-Jan-02 15:04:05.0000", timestamp, time.UTC)
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }

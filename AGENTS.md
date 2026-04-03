@@ -86,6 +86,14 @@ Theme-dependent styles are package-level vars reassigned by `applyTheme()`.
 1. Earth-centered vectors (`500@399`) → Position, Velocity, EarthDist, Speed
 2. Moon-centered vectors (`500@301`) → MoonPosition, MoonDist
 
+The client requests a narrow window around `now` and selects the ephemeris
+sample closest to the current time rather than assuming the first sample is the
+right one.
+
+`MoonPosition` is the spacecraft position in the Moon-centered frame. To derive
+the Moon's Earth-centered position, subtract it from the Earth-centered
+spacecraft vector. To derive the spacecraft→Moon vector, negate it.
+
 `IsOccluded()` checks geometric lunar occultation: whether the Earth→SC line
 passes within 1737.4 km of the Moon's center. Used for AOS/LOS signal indicator
 in the spacecraft panel and red spacecraft glyph in the trajectory view.
