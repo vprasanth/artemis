@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"artemis/internal/dsn"
 	"artemis/internal/horizons"
@@ -32,6 +33,11 @@ func (m Model) View() string {
 	}
 
 	w := m.layout[panelHeader].width
+	now := m.currentScreenProtectTime()
+
+	if m.screenProtectIdleActiveAt(now) {
+		return renderScreenProtectIdleView(m, now)
+	}
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
@@ -44,7 +50,7 @@ func (m Model) View() string {
 		reader := renderMissionLogReader(m, w, availableH)
 		help := renderFooter(m, w)
 		result := lipgloss.JoinVertical(lipgloss.Left, header, reader, help)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, result)
+		return m.placeDashboard(result, now)
 	}
 
 	var sections []string
@@ -79,8 +85,92 @@ func (m Model) View() string {
 
 	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
-	// Fill entire terminal: center horizontally, top-align vertically.
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, result)
+	return m.placeDashboard(result, now)
+}
+
+func (m Model) placeDashboard(content string, now time.Time) string {
+	frame := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, content)
+	dx, dy := m.screenProtectOffsetAt(now)
+	if dx == 0 && dy == 0 {
+		return frame
+	}
+	return shiftScreenFrame(frame, m.width, m.height, dx, dy)
+}
+
+func renderScreenProtectIdleView(m Model, now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	met := now.Sub(mission.LaunchTime)
+	if met < 0 {
+		met = 0
+	}
+	lines := []string{
+		dimStyle.Render("ARTEMIS II"),
+		dimStyle.Render("screen protection active"),
+		dimStyle.Render("MET " + mission.FormatMET(met)),
+		dimStyle.Render("UTC " + now.UTC().Format("2006-01-02 15:04:05")),
+		dimStyle.Render("press any key to wake"),
+	}
+	content := lipgloss.JoinVertical(lipgloss.Center, lines...)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+}
+
+func shiftScreenFrame(frame string, width, height, dx, dy int) string {
+	if width <= 0 || height <= 0 {
+		return frame
+	}
+
+	lines := strings.Split(frame, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+
+	for i, line := range lines {
+		lines[i] = shiftScreenLine(line, width, dx)
+	}
+
+	blankLine := strings.Repeat(" ", width)
+	if dy > 0 {
+		lines = append(make([]string, dy), lines...)
+		for i := 0; i < dy; i++ {
+			lines[i] = blankLine
+		}
+		if len(lines) > height {
+			lines = lines[:height]
+		}
+	} else if dy < 0 {
+		lines = append(lines[-dy:], make([]string, -dy)...)
+		if len(lines) > height {
+			lines = lines[:height]
+		}
+		for i := height + dy; i < height; i++ {
+			if i >= 0 && i < len(lines) {
+				lines[i] = blankLine
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func shiftScreenLine(line string, width, dx int) string {
+	line = ansi.Cut(line, 0, width)
+	if visible := ansi.StringWidth(line); visible < width {
+		line += strings.Repeat(" ", width-visible)
+	}
+
+	if dx > 0 {
+		return ansi.Cut(strings.Repeat(" ", dx)+line, 0, width)
+	}
+	if dx < 0 {
+		left := -dx
+		return ansi.Cut(line+strings.Repeat(" ", left), left, left+width)
+	}
+	return line
 }
 
 func renderFooter(m Model, w int) string {
@@ -110,6 +200,12 @@ func renderFooter(m Model, w int) string {
 	unitWide := fmt.Sprintf("u units(%s)", m.units.name())
 	unitCompact := fmt.Sprintf("u %s", m.units.name())
 	unitTight := fmt.Sprintf("u(%s)", m.units.compactName())
+	protectWide := fmt.Sprintf("p guard(%s)", m.screenProtectMode.wideName())
+	protectCompact := fmt.Sprintf("p %s", m.screenProtectMode.compactName())
+	protectTight := "p"
+	effectsWide := fmt.Sprintf("s fx(%s)", m.visualEffects.wideName())
+	effectsCompact := fmt.Sprintf("s %s", m.visualEffects.compactName())
+	effectsTight := "s"
 	notifyWide := fmt.Sprintf("n notify(%s)", notifyState)
 	notifyCompact := fmt.Sprintf("n ntfy(%s)", notifyState)
 	notifyTight := fmt.Sprintf("n(%s)", notifyState)
@@ -136,10 +232,11 @@ func renderFooter(m Model, w int) string {
 			viewWide,
 			fullscreenWide,
 			unitWide,
+			protectWide,
 			notifyWide,
 			debugWide,
 			fmt.Sprintf("c theme(%s)", theme),
-			"s stars",
+			effectsWide,
 			"r refresh",
 			"j/k/enter log",
 			notificationError,
@@ -153,10 +250,11 @@ func renderFooter(m Model, w int) string {
 			viewCompact,
 			fullscreenCompact,
 			unitCompact,
+			protectCompact,
 			notifyCompact,
 			debugCompact,
 			fmt.Sprintf("c %s", theme),
-			"s stars",
+			effectsCompact,
 			"r",
 			"log nav",
 			notificationError,
@@ -165,7 +263,7 @@ func renderFooter(m Model, w int) string {
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			joinFooterParts("q", "t", viewTight, fullscreenTight, unitTight, notifyTight, debugTight, "c", "s", "r", "log"),
+			joinFooterParts("q", "t", viewTight, fullscreenTight, unitTight, protectTight, notifyTight, debugTight, "c", effectsTight, "r", "log"),
 			notificationError,
 			hiddenCompact,
 			uptimeCompact,
@@ -608,7 +706,7 @@ func visualizationMeta(m Model, fullscreen bool) (string, string) {
 		legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
 			moonGlyphStyle.Render("{M}") + dimStyle.Render("=Moon  ") +
 			spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
-			dimStyle.Render("s: stars  v: switch view") + fullscreenHint
+			dimStyle.Render("s: effects  v: switch view") + fullscreenHint
 		return "ORBITAL CONTEXT", legend
 	case 2:
 		legend := dimStyle.Render("v: switch view") + fullscreenHint
@@ -624,7 +722,7 @@ func visualizationMeta(m Model, fullscreen bool) (string, string) {
 			moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
 			spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
 			sunDirectionStyle.Render("SUN") + dimStyle.Render("=Sun dir  ") +
-			dimStyle.Render("s: stars  v: switch view") + fullscreenHint
+			dimStyle.Render("s: effects  v: switch view") + fullscreenHint
 		return "TRAJECTORY", legend
 	}
 }

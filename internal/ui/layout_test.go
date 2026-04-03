@@ -309,6 +309,38 @@ func TestRenderFooterIncludesUnitsShortcut(t *testing.T) {
 	}
 }
 
+func TestRenderFooterIncludesScreenProtectionShortcut(t *testing.T) {
+	m := Model{
+		width:             160,
+		height:            24,
+		screenProtectMode: screenProtectDriftIdle,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 160)
+	if !strings.Contains(got, "p guard(drift+idle)") && !strings.Contains(got, "p d+i") && !strings.Contains(got, " |  p  | ") {
+		t.Fatalf("expected footer to include screen protection shortcut, got %q", got)
+	}
+}
+
+func TestRenderFooterIncludesVisualEffectsShortcutState(t *testing.T) {
+	m := Model{
+		width:         120,
+		height:        24,
+		visualEffects: effectsStarsSprite,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 120)
+	if !strings.Contains(got, "s ship") && !strings.Contains(got, "s fx(ship)") && !strings.Contains(got, " |  s  | ") {
+		t.Fatalf("expected footer to include visual effects shortcut state, got %q", got)
+	}
+}
+
 func TestRenderFooterIncludesFullscreenShortcut(t *testing.T) {
 	m := Model{
 		width:  120,
@@ -596,5 +628,35 @@ func TestBuildCacheHidesTopRowInFullscreen(t *testing.T) {
 	}
 	if !m.layout[panelTrajectory].visible {
 		t.Fatalf("expected trajectory panel to remain visible in fullscreen mode")
+	}
+}
+
+func TestShiftScreenFrameAppliesRightAndDownOffsets(t *testing.T) {
+	got := shiftScreenFrame("ABCD\nEFGH\nIJKL", 4, 3, 1, 1)
+	want := "    \n ABC\n EFG"
+	if got != want {
+		t.Fatalf("shiftScreenFrame() = %q, want %q", got, want)
+	}
+}
+
+func TestViewRendersIdleScreenProtectionScreen(t *testing.T) {
+	now := time.Now()
+	m := Model{
+		width:                  80,
+		height:                 24,
+		screenProtectMode:      screenProtectDriftIdle,
+		screenProtectIdleAfter: time.Minute,
+		lastActivityAt:         now.Add(-2 * time.Minute),
+		screenProtectNow:       now,
+		layout: map[panelID]panelLayout{
+			panelHeader: {visible: true, width: 80},
+		},
+	}
+
+	got := m.View()
+	for _, want := range []string{"screen protection active", "press any key to wake"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected idle screen to include %q, got:\n%s", want, got)
+		}
 	}
 }

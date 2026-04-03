@@ -245,6 +245,120 @@ func TestUpdateTogglesUnits(t *testing.T) {
 	}
 }
 
+func TestNewModelReadsScreenProtectionEnv(t *testing.T) {
+	t.Setenv("ARTEMIS_SCREEN_PROTECT", "drift-idle")
+	t.Setenv("ARTEMIS_SCREEN_PROTECT_DRIFT_INTERVAL", "90s")
+	t.Setenv("ARTEMIS_SCREEN_PROTECT_IDLE_AFTER", "20m")
+
+	m := NewModel()
+
+	if m.screenProtectMode != screenProtectDriftIdle {
+		t.Fatalf("expected env to enable drift-idle mode, got %v", m.screenProtectMode)
+	}
+	if m.screenProtectDriftAfter != 90*time.Second {
+		t.Fatalf("expected env drift interval to be 90s, got %v", m.screenProtectDriftAfter)
+	}
+	if m.screenProtectIdleAfter != 20*time.Minute {
+		t.Fatalf("expected env idle timeout to be 20m, got %v", m.screenProtectIdleAfter)
+	}
+	if m.lastActivityAt.IsZero() || m.screenProtectNow.IsZero() {
+		t.Fatalf("expected screen protection clocks to be initialized")
+	}
+}
+
+func TestNewModelFallsBackForInvalidScreenProtectionEnv(t *testing.T) {
+	t.Setenv("ARTEMIS_SCREEN_PROTECT", "invalid")
+	t.Setenv("ARTEMIS_SCREEN_PROTECT_DRIFT_INTERVAL", "0s")
+	t.Setenv("ARTEMIS_SCREEN_PROTECT_IDLE_AFTER", "not-a-duration")
+
+	m := NewModel()
+
+	if m.screenProtectMode != screenProtectOff {
+		t.Fatalf("expected invalid mode to fall back to off, got %v", m.screenProtectMode)
+	}
+	if m.screenProtectDriftAfter != defaultScreenProtectDriftInterval {
+		t.Fatalf("expected invalid drift interval to fall back, got %v", m.screenProtectDriftAfter)
+	}
+	if m.screenProtectIdleAfter != defaultScreenProtectIdleAfter {
+		t.Fatalf("expected invalid idle timeout to fall back, got %v", m.screenProtectIdleAfter)
+	}
+}
+
+func TestUpdateCyclesScreenProtectionMode(t *testing.T) {
+	m := Model{screenProtectMode: screenProtectOff}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd != nil {
+		t.Fatalf("expected no command when cycling screen protection")
+	}
+	got := model.(Model)
+	if got.screenProtectMode != screenProtectDrift {
+		t.Fatalf("expected first p press to enable drift mode, got %v", got.screenProtectMode)
+	}
+
+	model, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got = model.(Model)
+	if got.screenProtectMode != screenProtectDriftIdle {
+		t.Fatalf("expected second p press to enable drift-idle mode, got %v", got.screenProtectMode)
+	}
+
+	model, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got = model.(Model)
+	if got.screenProtectMode != screenProtectOff {
+		t.Fatalf("expected third p press to wrap back to off, got %v", got.screenProtectMode)
+	}
+}
+
+func TestIdleScreenProtectionConsumesWakeKey(t *testing.T) {
+	before := time.Now().Add(-2 * time.Minute)
+	model, cmd := Model{
+		units:                  unitMetric,
+		screenProtectMode:      screenProtectDriftIdle,
+		screenProtectIdleAfter: time.Minute,
+		lastActivityAt:         before,
+		screenProtectNow:       before.Add(2 * time.Minute),
+	}.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+
+	if cmd != nil {
+		t.Fatalf("expected wake key to avoid follow-up command")
+	}
+	got := model.(Model)
+	if got.units != unitMetric {
+		t.Fatalf("expected wake key to avoid applying the original action, got units %v", got.units)
+	}
+	if !got.lastActivityAt.After(before) {
+		t.Fatalf("expected wake key to refresh last activity, got %v", got.lastActivityAt)
+	}
+	if got.screenProtectIdleActive() {
+		t.Fatalf("expected wake key to clear idle state")
+	}
+}
+
+func TestUpdateCyclesVisualEffects(t *testing.T) {
+	m := Model{visualEffects: effectsStarsPulse}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Fatalf("expected no command when cycling visual effects")
+	}
+	got := model.(Model)
+	if got.visualEffects != effectsStarsSprite {
+		t.Fatalf("expected first s press to switch to sprite mode, got %v", got.visualEffects)
+	}
+
+	model, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	got = model.(Model)
+	if got.visualEffects != effectsPulseOnly {
+		t.Fatalf("expected second s press to switch to pulse-only mode, got %v", got.visualEffects)
+	}
+
+	model, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	got = model.(Model)
+	if got.visualEffects != effectsStarsPulse {
+		t.Fatalf("expected third s press to wrap to stars+pulse mode, got %v", got.visualEffects)
+	}
+}
+
 func TestEnterOpensBlogReaderAndFetchesPost(t *testing.T) {
 	m := Model{
 		blogClient: nasablog.NewClient(),
@@ -525,5 +639,33 @@ func TestShouldProbeTerminalSize(t *testing.T) {
 	m.tickCount = uint64(sizeProbeInterval / uiTickInterval)
 	if !m.shouldProbeTerminalSize() {
 		t.Fatalf("expected terminal size probe at configured interval")
+	}
+}
+
+func TestScreenProtectOffsetCyclesSlowDriftPattern(t *testing.T) {
+	base := time.Unix(100, 0)
+	m := Model{
+		screenProtectMode:       screenProtectDrift,
+		screenProtectDriftAfter: time.Minute,
+		lastActivityAt:          base,
+	}
+
+	cases := []struct {
+		at    time.Time
+		wantX int
+		wantY int
+	}{
+		{base, 0, 0},
+		{base.Add(time.Minute), 1, 0},
+		{base.Add(2 * time.Minute), 1, 1},
+		{base.Add(3 * time.Minute), 0, 1},
+		{base.Add(4 * time.Minute), 0, 0},
+	}
+
+	for _, tc := range cases {
+		gotX, gotY := m.screenProtectOffsetAt(tc.at)
+		if gotX != tc.wantX || gotY != tc.wantY {
+			t.Fatalf("screenProtectOffsetAt(%v) = (%d,%d), want (%d,%d)", tc.at, gotX, gotY, tc.wantX, tc.wantY)
+		}
 	}
 }

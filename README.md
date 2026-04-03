@@ -75,6 +75,7 @@ export PATH="$HOME/.local/bin:$PATH"
 | `v` | Cycle Trajectory, Orbital Context, Instruments, DSN SKY, and Weather Trends views |
 | `f` | Toggle fullscreen visualization mode |
 | `s` | Cycle visualization effects (`stars` / `ship` / `off`) |
+| `p` | Cycle screen protection (`off` / `drift` / `drift+idle`) |
 | `n` | Toggle native notifications |
 | `u` | Toggle metric and imperial telemetry units |
 | `r` | Force-refresh all data sources |
@@ -120,6 +121,18 @@ Mission log reader:
 Notifications:
 - Press `n` to toggle native desktop notifications for mission phase changes and newly detected mission log entries.
 - Native notifications are supported on macOS (`osascript`) and Linux (`notify-send`).
+
+Screen protection:
+- Press `p` to cycle between `off`, `drift`, and `drift+idle`.
+- `drift` slowly nudges the entire dashboard to reduce static pixels during long sessions.
+- `drift+idle` keeps the slow drift and switches to a dim wake screen after inactivity.
+- Unattended environments can set startup defaults with:
+
+```sh
+ARTEMIS_SCREEN_PROTECT=drift-idle
+ARTEMIS_SCREEN_PROTECT_DRIFT_INTERVAL=60s
+ARTEMIS_SCREEN_PROTECT_IDLE_AFTER=15m
+```
 
 ## Data Refresh Rates
 

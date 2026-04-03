@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,6 +24,9 @@ const (
 	trajectoryPathSample = 30 * time.Minute
 	uiTickInterval       = 1 * time.Second
 	sizeProbeInterval    = 5 * time.Second
+
+	defaultScreenProtectDriftInterval = 60 * time.Second
+	defaultScreenProtectIdleAfter     = 15 * time.Minute
 )
 
 type tickMsg time.Time
@@ -62,18 +66,135 @@ type openBrowserMsg struct{ err error }
 type notificationResultMsg struct{ err error }
 type notificationSender func(title, body string) tea.Cmd
 
+type screenProtectMode int
+
+const (
+	screenProtectOff screenProtectMode = iota
+	screenProtectDrift
+	screenProtectDriftIdle
+)
+
+func (m screenProtectMode) next() screenProtectMode {
+	switch m {
+	case screenProtectOff:
+		return screenProtectDrift
+	case screenProtectDrift:
+		return screenProtectDriftIdle
+	default:
+		return screenProtectOff
+	}
+}
+
+func (m screenProtectMode) driftEnabled() bool {
+	return m != screenProtectOff
+}
+
+func (m screenProtectMode) idleEnabled() bool {
+	return m == screenProtectDriftIdle
+}
+
+func (m screenProtectMode) wideName() string {
+	switch m {
+	case screenProtectDrift:
+		return "drift"
+	case screenProtectDriftIdle:
+		return "drift+idle"
+	default:
+		return "off"
+	}
+}
+
+func (m screenProtectMode) compactName() string {
+	switch m {
+	case screenProtectDriftIdle:
+		return "d+i"
+	default:
+		return m.wideName()
+	}
+}
+
+func parseScreenProtectMode(raw string) screenProtectMode {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "drift":
+		return screenProtectDrift
+	case "drift-idle":
+		return screenProtectDriftIdle
+	default:
+		return screenProtectOff
+	}
+}
+
+func parseEnvDuration(name string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
+}
+
+type visualEffectsMode int
+
+const (
+	effectsStarsPulse visualEffectsMode = iota
+	effectsStarsSprite
+	effectsPulseOnly
+)
+
+func (m visualEffectsMode) next() visualEffectsMode {
+	switch m {
+	case effectsStarsPulse:
+		return effectsStarsSprite
+	case effectsStarsSprite:
+		return effectsPulseOnly
+	default:
+		return effectsStarsPulse
+	}
+}
+
+func (m visualEffectsMode) starsEnabled() bool {
+	return m != effectsPulseOnly
+}
+
+func (m visualEffectsMode) spriteEnabled() bool {
+	return m == effectsStarsSprite
+}
+
+func (m visualEffectsMode) wideName() string {
+	switch m {
+	case effectsStarsSprite:
+		return "ship"
+	case effectsPulseOnly:
+		return "off"
+	default:
+		return "stars"
+	}
+}
+
+func (m visualEffectsMode) compactName() string {
+	return m.wideName()
+}
+
 type Model struct {
 	width  int
 	height int
 
 	showGantt               bool // toggle between Gantt chart and event timeline
-	showStars               bool // toggle starfield in trajectory
+	visualEffects           visualEffectsMode
+	screenProtectMode       screenProtectMode
 	notificationsEnabled    bool // toggle native desktop notifications
 	debugKeysEnabled        bool // enable debug-only keybindings
 	visualizationFullscreen bool // expand visualization into the primary content area
 	units                   unitSystem
 	tickCount               uint64 // monotonic frame counter for animation
 	trajectoryView          int    // 0=Trajectory, 1=Orbital, 2=Instruments
+	lastActivityAt          time.Time
+	screenProtectNow        time.Time
+	screenProtectDriftAfter time.Duration
+	screenProtectIdleAfter  time.Duration
 
 	speedHistory    []float64          // ring buffer (cap 24) for sparkline
 	positionTrail   []horizons.Vector3 // ring buffer (cap 12) for recent live trail
@@ -148,24 +269,30 @@ type Model struct {
 }
 
 func NewModel() Model {
+	now := time.Now()
 	return Model{
-		showGantt:            true,
-		showStars:            true,
-		notificationsEnabled: true,
-		debugKeysEnabled:     os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
-		units:                unitMetric,
-		dsnClient:            dsn.NewClient(),
-		horizonsClient:       horizons.NewClient(),
-		swClient:             spaceweather.NewClient(),
-		blogClient:           nasablog.NewClient(),
-		dsnLoading:           true,
-		hzLoading:            true,
-		swLoading:            true,
-		blogLoading:          true,
-		hzPathLoading:        true,
-		startedAt:            time.Now(),
-		notifier:             nativeNotifyCmd,
-		blogPostCache:        make(map[int]*nasablog.Post),
+		showGantt:               true,
+		visualEffects:           effectsStarsPulse,
+		screenProtectMode:       parseScreenProtectMode(os.Getenv("ARTEMIS_SCREEN_PROTECT")),
+		notificationsEnabled:    true,
+		debugKeysEnabled:        os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
+		units:                   unitMetric,
+		lastActivityAt:          now,
+		screenProtectNow:        now,
+		screenProtectDriftAfter: parseEnvDuration("ARTEMIS_SCREEN_PROTECT_DRIFT_INTERVAL", defaultScreenProtectDriftInterval),
+		screenProtectIdleAfter:  parseEnvDuration("ARTEMIS_SCREEN_PROTECT_IDLE_AFTER", defaultScreenProtectIdleAfter),
+		dsnClient:               dsn.NewClient(),
+		horizonsClient:          horizons.NewClient(),
+		swClient:                spaceweather.NewClient(),
+		blogClient:              nasablog.NewClient(),
+		dsnLoading:              true,
+		hzLoading:               true,
+		swLoading:               true,
+		blogLoading:             true,
+		hzPathLoading:           true,
+		startedAt:               now,
+		notifier:                nativeNotifyCmd,
+		blogPostCache:           make(map[int]*nasablog.Post),
 	}
 }
 
@@ -183,11 +310,22 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		now := time.Now()
+		m.screenProtectNow = now
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		}
+		if m.screenProtectIdleActiveAt(now) {
+			m.markUserActivity(now)
+			return m, nil
+		}
+		m.markUserActivity(now)
 		if m.blogReaderOpen {
 			return m.updateBlogReader(msg)
 		}
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "esc":
 			return m, tea.Quit
 		case "t":
 			m.showGantt = !m.showGantt
@@ -196,13 +334,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			NextTheme()
 			m.buildCache()
 		case "s":
-			m.showStars = !m.showStars
+			m.visualEffects = m.visualEffects.next()
 			m.buildCache()
 		case "n":
 			m.notificationsEnabled = !m.notificationsEnabled
 			m.buildCache()
 		case "u":
 			m.units = m.units.next()
+			m.buildCache()
+		case "p":
+			m.screenProtectMode = m.screenProtectMode.next()
 			m.buildCache()
 		case "N":
 			if m.debugKeysEnabled {
@@ -283,6 +424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.tickCount++
+		m.screenProtectNow = time.Time(msg)
 		var cmds []tea.Cmd
 		cmds = append(cmds, tickCmd())
 		if m.notificationError != "" && time.Since(m.notificationErrorAt) > 5*time.Second {
@@ -465,6 +607,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) markUserActivity(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	m.lastActivityAt = now
+	m.screenProtectNow = now
+}
+
+func (m Model) currentScreenProtectTime() time.Time {
+	if !m.screenProtectNow.IsZero() {
+		return m.screenProtectNow
+	}
+	return time.Now()
+}
+
+func (m Model) screenProtectIdleActive() bool {
+	return m.screenProtectIdleActiveAt(m.currentScreenProtectTime())
+}
+
+func (m Model) screenProtectIdleActiveAt(now time.Time) bool {
+	if !m.screenProtectMode.idleEnabled() || m.screenProtectIdleAfter <= 0 {
+		return false
+	}
+	if now.IsZero() || m.lastActivityAt.IsZero() {
+		return false
+	}
+	return !now.Before(m.lastActivityAt.Add(m.screenProtectIdleAfter))
+}
+
+func (m Model) screenProtectOffsetAt(now time.Time) (int, int) {
+	if !m.screenProtectMode.driftEnabled() || m.screenProtectIdleActiveAt(now) || m.screenProtectDriftAfter <= 0 {
+		return 0, 0
+	}
+	base := m.lastActivityAt
+	if base.IsZero() {
+		base = m.startedAt
+	}
+	if base.IsZero() || now.IsZero() || now.Before(base) {
+		return 0, 0
+	}
+
+	pattern := [...]struct {
+		x int
+		y int
+	}{
+		{0, 0},
+		{1, 0},
+		{1, 1},
+		{0, 1},
+	}
+	step := int(now.Sub(base) / m.screenProtectDriftAfter)
+	offset := pattern[step%len(pattern)]
+	return offset.x, offset.y
 }
 
 func (m Model) updateBlogReader(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
