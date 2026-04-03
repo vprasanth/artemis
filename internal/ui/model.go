@@ -58,11 +58,12 @@ type Model struct {
 	width  int
 	height int
 
-	showGantt               bool   // toggle between Gantt chart and event timeline
-	showStars               bool   // toggle starfield in trajectory
-	notificationsEnabled    bool   // toggle native desktop notifications
-	debugKeysEnabled        bool   // enable debug-only keybindings
-	visualizationFullscreen bool   // expand visualization into the primary content area
+	showGantt               bool // toggle between Gantt chart and event timeline
+	showStars               bool // toggle starfield in trajectory
+	notificationsEnabled    bool // toggle native desktop notifications
+	debugKeysEnabled        bool // enable debug-only keybindings
+	visualizationFullscreen bool // expand visualization into the primary content area
+	units                   unitSystem
 	tickCount               uint64 // monotonic frame counter for animation
 	trajectoryView          int    // 0=Trajectory, 1=Orbital, 2=Instruments
 
@@ -131,6 +132,7 @@ func NewModel() Model {
 		showStars:            true,
 		notificationsEnabled: true,
 		debugKeysEnabled:     os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
+		units:                unitMetric,
 		dsnClient:            dsn.NewClient(),
 		horizonsClient:       horizons.NewClient(),
 		swClient:             spaceweather.NewClient(),
@@ -173,6 +175,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.buildCache()
 		case "n":
 			m.notificationsEnabled = !m.notificationsEnabled
+			m.buildCache()
+		case "u":
+			m.units = m.units.next()
 			m.buildCache()
 		case "N":
 			if m.debugKeysEnabled {

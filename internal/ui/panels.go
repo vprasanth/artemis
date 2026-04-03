@@ -91,6 +91,9 @@ func renderFooter(m Model, w int) string {
 	viewWide := "v view"
 	viewCompact := "v view"
 	viewTight := "v"
+	unitWide := fmt.Sprintf("u units(%s)", m.units.name())
+	unitCompact := fmt.Sprintf("u %s", m.units.name())
+	unitTight := fmt.Sprintf("u(%s)", m.units.compactName())
 	notifyWide := fmt.Sprintf("n notify(%s)", notifyState)
 	notifyCompact := fmt.Sprintf("n ntfy(%s)", notifyState)
 	notifyTight := fmt.Sprintf("n(%s)", notifyState)
@@ -116,6 +119,7 @@ func renderFooter(m Model, w int) string {
 			"t timeline",
 			viewWide,
 			fullscreenWide,
+			unitWide,
 			notifyWide,
 			debugWide,
 			fmt.Sprintf("c theme(%s)", theme),
@@ -132,6 +136,7 @@ func renderFooter(m Model, w int) string {
 			"t tl",
 			viewCompact,
 			fullscreenCompact,
+			unitCompact,
 			notifyCompact,
 			debugCompact,
 			fmt.Sprintf("c %s", theme),
@@ -144,7 +149,7 @@ func renderFooter(m Model, w int) string {
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			joinFooterParts("q", "t", viewTight, fullscreenTight, notifyTight, debugTight, "c", "s", "r", "log"),
+			joinFooterParts("q", "t", viewTight, fullscreenTight, unitTight, notifyTight, debugTight, "c", "s", "r", "log"),
 			notificationError,
 			hiddenCompact,
 			uptimeCompact,
@@ -353,17 +358,17 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 		content = fmt.Sprintf(
 			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s\n%s  %s\n%s  %s",
 			labelStyle.Render("Earth Dist:"),
-			valueStyle.Render(formatDist(earthDist)),
+			valueStyle.Render(formatDist(earthDist, m.units)),
 			labelStyle.Render("Moon Dist: "),
-			valueStyle.Render(formatMoonDist(moonDist)),
+			valueStyle.Render(formatMoonDist(moonDist, m.units)),
 			labelStyle.Render("Speed:     "),
-			valueStyle.Render(fmt.Sprintf("%.3f km/s  (%.0f km/h)", s.Speed, s.Speed*3600)),
+			valueStyle.Render(formatSpeedForUnits(s.Speed, m.units)),
 			labelStyle.Render("Earth Rate:"),
-			formatEarthRate(s),
+			formatEarthRateForUnits(s, m.units),
 			labelStyle.Render("Ecl Lon/Lat:"),
 			formatEclipticCoords(s.Position),
 			labelStyle.Render("Position:  "),
-			dimStyle.Render(fmt.Sprintf("X:%.0f  Y:%.0f  Z:%.0f km", s.Position.X, s.Position.Y, s.Position.Z)),
+			dimStyle.Render(formatPositionVector(s.Position, m.units)),
 			labelStyle.Render("Data Age:  "),
 			formatStateAge(m, time.Now()),
 			labelStyle.Render("RTLT:      "),
@@ -426,7 +431,7 @@ func renderDSNPanel(m Model, w int) string {
 			rangeTxt := ""
 			for _, t := range dish.Targets {
 				if t.DownlegRange > 0 {
-					rangeTxt = formatDist(t.DownlegRange)
+					rangeTxt = formatDist(t.DownlegRange, m.units)
 				}
 			}
 
@@ -587,21 +592,15 @@ func renderCrewPanel(w int) string {
 	)
 }
 
-func formatDist(km float64) string {
-	if km >= 1e6 {
-		return fmt.Sprintf("%.1f M km", km/1e6)
-	}
-	if km >= 1000 {
-		return fmt.Sprintf("%.0f km", km)
-	}
-	return fmt.Sprintf("%.1f km", km)
+func formatDist(km float64, units unitSystem) string {
+	return formatDistForUnits(km, units)
 }
 
-func formatMoonDist(km float64) string {
+func formatMoonDist(km float64, units unitSystem) string {
 	if km < 0 {
 		return dimStyle.Render("calculating...")
 	}
-	return formatDist(km)
+	return formatDist(km, units)
 }
 
 func effectiveEarthDist(m Model) float64 {
@@ -614,7 +613,7 @@ func effectiveEarthDist(m Model) float64 {
 	return 0
 }
 
-func formatEarthRate(s *horizons.State) string {
+func formatEarthRateForUnits(s *horizons.State, units unitSystem) string {
 	rate, ok := radialVelocity(s.Position, s.Velocity)
 	if !ok {
 		return dimStyle.Render("n/a")
@@ -628,7 +627,7 @@ func formatEarthRate(s *horizons.State) string {
 		direction = "inbound"
 	}
 
-	return valueStyle.Render(fmt.Sprintf("%+.3f km/s", rate)) + dimStyle.Render(" "+direction)
+	return valueStyle.Render(formatRateForUnits(rate, units)) + dimStyle.Render(" "+direction)
 }
 
 func radialVelocity(position, velocity horizons.Vector3) (float64, bool) {
@@ -647,6 +646,16 @@ func formatEclipticCoords(position horizons.Vector3) string {
 	}
 
 	return valueStyle.Render(fmt.Sprintf("%.1f° / %+.1f°", lon, lat))
+}
+
+func formatPositionVector(position horizons.Vector3, units unitSystem) string {
+	return fmt.Sprintf(
+		"X:%.0f  Y:%.0f  Z:%.0f %s",
+		distanceInUnits(position.X, units),
+		distanceInUnits(position.Y, units),
+		distanceInUnits(position.Z, units),
+		units.distanceUnit(),
+	)
 }
 
 func eclipticCoords(position horizons.Vector3) (float64, float64, bool) {
@@ -802,7 +811,7 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 		labelStyle.Render("Kp:"),
 		lipgloss.NewStyle().Bold(true).Foreground(kpColor).Render(fmt.Sprintf("%.0f %s", s.Kp, kpLabel)),
 		labelStyle.Render("Wind:"),
-		valueStyle.Render(fmt.Sprintf("%.0f km/s", s.WindSpeed)),
+		valueStyle.Render(formatWindSpeedForUnits(s.WindSpeed, m.units)),
 		labelStyle.Render("Bz:"),
 		lipgloss.NewStyle().Bold(true).Foreground(bzColor).Render(fmt.Sprintf("%.1f nT", s.Bz)),
 		labelStyle.Render("Protons:"),

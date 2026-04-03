@@ -200,8 +200,8 @@ func buildOrbitalInfo(m Model, moonAngle float64) string {
 	earthDist := "---"
 	moonDist := "---"
 	if m.hzState != nil {
-		earthDist = formatCompactDist(effectiveEarthDist(m))
-		moonDist = formatCompactDist(m.hzState.MoonDist)
+		earthDist = formatCompactDist(effectiveEarthDist(m), m.units)
+		moonDist = formatCompactDist(m.hzState.MoonDist, m.units)
 	}
 
 	phaseDeg := moonAngle * 180.0 / math.Pi

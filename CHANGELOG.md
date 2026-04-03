@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Native desktop notifications for mission phase changes and new mission log entries, with an in-app failure indicator and runtime uptime in the footer
+- Fullscreen visualization mode with `MISSION CLOCK` and `SPACECRAFT STATE` embedded into the active visualization panel
+- Derived spacecraft telemetry including Earth radial velocity, ecliptic longitude/latitude, and source data age
+- Short instrument trend graphs for Earth radial velocity, DSN range, RTLT, and downlink rate
+- Runtime unit toggle for switching the dashboard between metric and imperial telemetry
+- Trajectory Sun-direction marker for quick orientation in the Earth-centered plot
+- `RELEASE.md` documenting the manual release workflow
+
+### Changed
+- Trajectory rendering now uses live Horizons-sampled Earth-centered mission geometry instead of a scripted mission-progress arc
+- Trajectory, orbital, and instrument distance displays now share the same effective Earth-distance source so labels stay consistent across views
+- Instruments view now uses a wider split layout, clearer scope labels, and additional derived telemetry to better use available space
+- Spacecraft state, instruments, trajectory labels, orbital labels, DSN range text, and solar-wind speed now follow the selected unit system
+- Mission clock and Gantt panels now derive mission day totals from the actual timeline data instead of hard-coded day counts
+- `make changefile TAG=...` now generates changelog entries from the latest tag through `HEAD`, and the old `make tag` helper has been removed
+
+### Fixed
+- Narrow-height instrument rendering regression where primary telemetry could disappear in short terminals
+- Gantt/timeline caching drift so live mission timing indicators now refresh on tick
+- Trajectory path visibility, compact distance formatting, and path legends (`away` / `return`) for clearer interpretation
+- Proximity scope Moon bearing and Horizons sample selection so visualizations better match the underlying data source
+
 ## v0.6.0
 
 - Hide footer view shortcut when visualization panel is hidden

@@ -232,6 +232,18 @@ func TestUpdateFiresDebugNotificationWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestUpdateTogglesUnits(t *testing.T) {
+	model, cmd := Model{units: unitMetric}.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd != nil {
+		t.Fatalf("expected no command when toggling units")
+	}
+
+	got := model.(Model)
+	if got.units != unitImperial {
+		t.Fatalf("expected units to toggle to imperial, got %v", got.units)
+	}
+}
+
 func TestUpdateStoresTransientNotificationFailure(t *testing.T) {
 	model, cmd := Model{}.Update(notificationResultMsg{err: errors.New("notify backend unavailable")})
 

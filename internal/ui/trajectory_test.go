@@ -119,17 +119,20 @@ func TestEffectiveEarthDistPrefersDSNRange(t *testing.T) {
 
 func TestFormatCompactDist(t *testing.T) {
 	cases := []struct {
-		in   float64
-		want string
+		name  string
+		units unitSystem
+		in    float64
+		want  string
 	}{
-		{950, "950 km"},
-		{65000, "65k km"},
-		{1336000, "1.3M km"},
+		{"metric-short", unitMetric, 950, "950 km"},
+		{"metric-kilo", unitMetric, 65000, "65k km"},
+		{"metric-mega", unitMetric, 1336000, "1.3M km"},
+		{"imperial-kilo", unitImperial, 65000, "40k mi"},
 	}
 
 	for _, tc := range cases {
-		if got := formatCompactDist(tc.in); got != tc.want {
-			t.Fatalf("formatCompactDist(%v) = %q, want %q", tc.in, got, tc.want)
+		if got := formatCompactDist(tc.in, tc.units); got != tc.want {
+			t.Fatalf("%s: formatCompactDist(%v) = %q, want %q", tc.name, tc.in, got, tc.want)
 		}
 	}
 }

@@ -56,10 +56,10 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 		if m.hzState != nil {
 			moonDist = m.hzState.MoonDist
 		}
-		placeLabel(canvas, earthPoint.x, earthPoint.y+2, earthDist, plotW, plotH)
+		placeLabel(canvas, earthPoint.x, earthPoint.y+2, earthDist, m.units, plotW, plotH)
 		if moonVec, ok := earthMoonVector(m.hzState); ok {
 			moonPoint := frame.project(moonVec)
-			placeLabel(canvas, moonPoint.x, moonPoint.y-2, moonDist, plotW, plotH)
+			placeLabel(canvas, moonPoint.x, moonPoint.y-2, moonDist, m.units, plotW, plotH)
 		}
 	}
 
@@ -344,11 +344,11 @@ func segmentGlyph(x0, y0, x1, y1 int, fallback string) string {
 	}
 }
 
-func placeLabel(canvas [][]string, cx, cy int, dist float64, plotW, plotH int) {
+func placeLabel(canvas [][]string, cx, cy int, dist float64, units unitSystem, plotW, plotH int) {
 	if dist <= 0 || cy < 0 || cy >= plotH {
 		return
 	}
-	label := formatCompactDist(dist)
+	label := formatCompactDist(dist, units)
 	startX := cx - len(label)/2
 	for i, ch := range label {
 		x := startX + i
@@ -358,14 +358,8 @@ func placeLabel(canvas [][]string, cx, cy int, dist float64, plotW, plotH int) {
 	}
 }
 
-func formatCompactDist(km float64) string {
-	if km >= 1e6 {
-		return fmt.Sprintf("%.1fM km", km/1e6)
-	}
-	if km >= 1000 {
-		return fmt.Sprintf("%.0fk km", km/1e3)
-	}
-	return fmt.Sprintf("%.0f km", km)
+func formatCompactDist(km float64, units unitSystem) string {
+	return formatCompactDistForUnits(km, units)
 }
 
 func placeLegend(canvas [][]string, plotW, plotH int) {

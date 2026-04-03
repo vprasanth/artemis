@@ -108,7 +108,7 @@ func renderVelocityGauge(m Model, w, h int) string {
 	var lines []string
 
 	// Title
-	lines = append(lines, instTitleStyle.Render("VELOCITY")+" "+dimStyle.Render("km/s"))
+	lines = append(lines, instTitleStyle.Render("VELOCITY")+" "+dimStyle.Render(m.units.speedUnit()))
 
 	// Horizontal bar gauge (0–2 km/s)
 	barW := w - 4
@@ -118,8 +118,8 @@ func renderVelocityGauge(m Model, w, h int) string {
 	lines = append(lines, renderHBar(speed, 2.0, barW, gaugeFilledStyle, gaugeEmptyStyle))
 
 	// Speed value
-	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("%.3f", speed))+" "+dimStyle.Render("km/s")+
-		"  "+dimStyle.Render(fmt.Sprintf("(%.0f km/h)", speed*3600)))
+	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("%.3f", speedInUnits(speed, m.units)))+" "+dimStyle.Render(m.units.speedUnit())+
+		"  "+dimStyle.Render(speedCompanionUnit(speed, m.units)))
 
 	if h >= 7 {
 		radial, ok := radialVelocity(position, velocity)
@@ -132,13 +132,18 @@ func renderVelocityGauge(m Model, w, h int) string {
 			case radial < -0.005:
 				direction = "inbound"
 			}
-			radialLine = dimStyle.Render("radial ") + gaugeFilledStyle.Render(fmt.Sprintf("%+.3f km/s", radial)) + dimStyle.Render(" "+direction)
+			radialLine = dimStyle.Render("radial ") + gaugeFilledStyle.Render(formatRateForUnits(radial, m.units)) + dimStyle.Render(" "+direction)
 		}
 		lines = append(lines, radialLine)
 	}
 
 	if h >= 8 {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("vx %+.2f  vy %+.2f  vz %+.2f", velocity.X, velocity.Y, velocity.Z)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf(
+			"vx %s  vy %s  vz %s",
+			formatVectorForUnits(velocity.X, m.units),
+			formatVectorForUnits(velocity.Y, m.units),
+			formatVectorForUnits(velocity.Z, m.units),
+		)))
 	}
 
 	// Sparkline from speed history
@@ -180,7 +185,7 @@ func renderRangeFinder(m Model, w, h int) string {
 
 	var lines []string
 
-	lines = append(lines, instTitleStyle.Render("RANGE")+" "+dimStyle.Render("km"))
+	lines = append(lines, instTitleStyle.Render("RANGE")+" "+dimStyle.Render(m.units.distanceUnit()))
 
 	maxRange := 450000.0
 	barW := w - 6
@@ -190,11 +195,11 @@ func renderRangeFinder(m Model, w, h int) string {
 
 	// Earth distance bar
 	lines = append(lines, earthGlyphStyle.Render("E ")+renderHBar(earthDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle))
-	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(earthDist)))
+	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(earthDist, m.units)))
 
 	// Moon distance bar
 	lines = append(lines, moonGlyphStyle.Render("M ")+renderHBar(moonDist, maxRange, barW, gaugeFilledStyle, gaugeEmptyStyle))
-	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(moonDist)))
+	lines = append(lines, "  "+dimStyle.Render(formatCompactDist(moonDist, m.units)))
 
 	// Closing rate indicator
 	if len(m.speedHistory) >= 2 {
@@ -221,7 +226,7 @@ func renderRangeFinder(m Model, w, h int) string {
 	}
 
 	if h >= 9 && moonBaseline > 0 {
-		lines = append(lines, dimStyle.Render("E-M baseline ")+dimStyle.Render(formatCompactDist(moonBaseline)))
+		lines = append(lines, dimStyle.Render("E-M baseline ")+dimStyle.Render(formatCompactDist(moonBaseline, m.units)))
 	}
 
 	if h >= 10 && len(m.dsnRangeHistory) > 1 {

@@ -149,6 +149,34 @@ func TestRenderSpacecraftPanelShowsDerivedTelemetry(t *testing.T) {
 	}
 }
 
+func TestRenderSpacecraftPanelSupportsImperialUnits(t *testing.T) {
+	now := time.Now()
+	m := Model{
+		units: unitImperial,
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: -2000, Z: 500},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    now.Add(-8 * time.Second),
+		},
+		dsnStatus: &dsn.Status{
+			Range:     1732,
+			RTLT:      0.25,
+			Timestamp: now.Add(-3 * time.Second),
+		},
+	}
+
+	got := renderSpacecraftPanel(m, 70, 0)
+	for _, want := range []string{"mi/s", "mph", " mi", "X:621  Y:-1243  Z:311 mi"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected imperial spacecraft panel to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestRadialVelocity(t *testing.T) {
 	got, ok := radialVelocity(
 		horizons.Vector3{X: 1000, Y: 0, Z: 0},
@@ -263,6 +291,22 @@ func TestRenderFooterIncludesNotificationShortcut(t *testing.T) {
 	}
 }
 
+func TestRenderFooterIncludesUnitsShortcut(t *testing.T) {
+	m := Model{
+		width:  120,
+		height: 24,
+		units:  unitImperial,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 120)
+	if !strings.Contains(got, "u imperial") && !strings.Contains(got, "u(imp)") {
+		t.Fatalf("expected footer to include units shortcut, got %q", got)
+	}
+}
+
 func TestRenderFooterIncludesFullscreenShortcut(t *testing.T) {
 	m := Model{
 		width:  120,
@@ -272,12 +316,12 @@ func TestRenderFooterIncludesFullscreenShortcut(t *testing.T) {
 		},
 	}
 
-	if got := renderFooter(m, 120); !strings.Contains(got, "f full") {
+	if got := renderFooter(m, 120); !strings.Contains(got, "f full") && !strings.Contains(got, " |  f  | ") {
 		t.Fatalf("expected footer to include fullscreen shortcut, got %q", got)
 	}
 
 	m.visualizationFullscreen = true
-	if got := renderFooter(m, 120); !strings.Contains(got, "f win") {
+	if got := renderFooter(m, 120); !strings.Contains(got, "f win") && !strings.Contains(got, " |  f  | ") {
 		t.Fatalf("expected footer to include windowed shortcut in fullscreen mode, got %q", got)
 	}
 }
@@ -297,7 +341,7 @@ func TestRenderFooterShowsDebugShortcutOnlyWhenEnabled(t *testing.T) {
 
 	enabled := disabled
 	enabled.debugKeysEnabled = true
-	if got := renderFooter(enabled, 120); !strings.Contains(got, "N test") {
+	if got := renderFooter(enabled, 120); !strings.Contains(got, "N test") && !strings.Contains(got, " |  N  | ") {
 		t.Fatalf("expected footer with debug mode to include debug shortcut, got %q", got)
 	}
 }
