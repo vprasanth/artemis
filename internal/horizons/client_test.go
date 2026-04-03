@@ -36,3 +36,43 @@ $$EOE`
 		t.Fatalf("speed = %v, want 2", got.Speed)
 	}
 }
+
+func TestParseVectorSamplesReturnsSeries(t *testing.T) {
+	text := `header
+$$SOE
+2461132.916666667 = A.D. 2026-Apr-02 10:00:00.0000 TDB
+ X = 1.000000000000000E+03 Y = 0.000000000000000E+00 Z = 0.000000000000000E+00
+ VX= 1.000000000000000E+00 VY= 0.000000000000000E+00 VZ= 0.000000000000000E+00
+2461132.958333333 = A.D. 2026-Apr-02 10:01:00.0000 TDB
+ X = 2.000000000000000E+03 Y = 3.000000000000000E+02 Z = 0.000000000000000E+00
+ VX= 2.000000000000000E+00 VY= 1.000000000000000E+00 VZ= 0.000000000000000E+00
+$$EOE`
+
+	got, err := parseVectorSamples(text)
+	if err != nil {
+		t.Fatalf("parseVectorSamples() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(parseVectorSamples()) = %d, want 2", len(got))
+	}
+	if got[1].Position.Y != 300 {
+		t.Fatalf("second sample Y = %v, want 300", got[1].Position.Y)
+	}
+}
+
+func TestFormatStepSize(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{30 * time.Minute, "30 min"},
+		{time.Hour, "1 hour"},
+		{2 * time.Hour, "2 hours"},
+	}
+
+	for _, tc := range cases {
+		if got := formatStepSize(tc.in); got != tc.want {
+			t.Fatalf("formatStepSize(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

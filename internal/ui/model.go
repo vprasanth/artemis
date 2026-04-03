@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	maxSpeedHistory  = 24
-	maxPositionTrail = 12
+	maxSpeedHistory      = 24
+	maxPositionTrail     = 12
+	maxMetricHistory     = 24
+	trajectoryPathSample = 30 * time.Minute
 )
 
 type tickMsg time.Time
@@ -31,6 +33,11 @@ type dsnMsg struct {
 type horizonsMsg struct {
 	state *horizons.State
 	err   error
+}
+
+type horizonsPathMsg struct {
+	points []horizons.Vector3
+	err    error
 }
 
 type swMsg struct {
@@ -55,11 +62,17 @@ type Model struct {
 	showStars            bool   // toggle starfield in trajectory
 	notificationsEnabled bool   // toggle native desktop notifications
 	debugKeysEnabled     bool   // enable debug-only keybindings
+	visualizationFullscreen bool // expand visualization into the primary content area
 	tickCount            uint64 // monotonic frame counter for animation
 	trajectoryView       int    // 0=Trajectory, 1=Orbital, 2=Instruments
 
-	speedHistory  []float64          // ring buffer (cap 24) for sparkline
-	positionTrail []horizons.Vector3 // ring buffer (cap 12) for orbital trail
+	speedHistory   []float64          // ring buffer (cap 24) for sparkline
+	positionTrail  []horizons.Vector3 // ring buffer (cap 12) for recent live trail
+	trajectoryPath []horizons.Vector3 // Horizons-sampled mission arc for trajectory view
+	radialHistory  []float64          // ring buffer for Earth radial velocity trend
+	dsnRangeHistory []float64         // ring buffer for DSN downleg range trend
+	rtltHistory    []float64          // ring buffer for DSN round-trip light time trend
+	dsnRateHistory []float64          // ring buffer for active DSN downlink rate trend
 
 	dsnClient      *dsn.Client
 	horizonsClient *horizons.Client
@@ -70,9 +83,11 @@ type Model struct {
 	dsnErr     error
 	dsnLoading bool
 
-	hzState   *horizons.State
-	hzErr     error
-	hzLoading bool
+	hzState       *horizons.State
+	hzErr         error
+	hzLoading     bool
+	hzPathErr     error
+	hzPathLoading bool
 
 	swStatus  *spaceweather.Status
 	swErr     error
@@ -87,6 +102,7 @@ type Model struct {
 
 	lastDSNFetch     time.Time
 	lastHorizonFetch time.Time
+	lastHorizonPathFetch time.Time
 	lastSWFetch      time.Time
 	lastBlogFetch    time.Time
 	startedAt        time.Time
@@ -123,6 +139,7 @@ func NewModel() Model {
 		hzLoading:            true,
 		swLoading:            true,
 		blogLoading:          true,
+		hzPathLoading:        true,
 		startedAt:            time.Now(),
 		notifier:             nativeNotifyCmd,
 	}
@@ -133,6 +150,7 @@ func (m Model) Init() tea.Cmd {
 		tickCmd(),
 		fetchDSN(m.dsnClient),
 		fetchHorizons(m.horizonsClient),
+		fetchHorizonPath(m.horizonsClient),
 		fetchSW(m.swClient),
 		fetchBlog(m.blogClient),
 	)
@@ -163,6 +181,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "v":
 			m.trajectoryView = (m.trajectoryView + 1) % 3
 			m.buildCache()
+		case "f":
+			m.visualizationFullscreen = !m.visualizationFullscreen
+			m.buildCache()
 		case "r":
 			var cmds []tea.Cmd
 			if !m.dsnLoading {
@@ -172,6 +193,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.hzLoading {
 				m.hzLoading = true
 				cmds = append(cmds, fetchHorizons(m.horizonsClient))
+			}
+			if !m.hzPathLoading {
+				m.hzPathLoading = true
+				cmds = append(cmds, fetchHorizonPath(m.horizonsClient))
 			}
 			if !m.swLoading {
 				m.swLoading = true
@@ -240,18 +265,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render trajectory every tick for animation (stars twinkle, spacecraft pulse).
 		if m.layout != nil {
 			if pl := m.layout[panelTrajectory]; pl.visible {
-				plotH := pl.height - 3
-				if plotH < 6 {
-					plotH = 6
-				}
-				switch m.trajectoryView {
-				case 1:
-					m.cachedTrajectory = renderOrbitalPanel(m, m.width, plotH)
-				case 2:
-					m.cachedTrajectory = renderInstrumentPanel(m, m.width, plotH)
-				default:
-					m.cachedTrajectory = renderTrajectoryPanel(m, m.width, plotH)
-				}
+				m.cachedTrajectory = m.renderCachedTrajectoryPanel(pl.height)
 			}
 		}
 
@@ -263,6 +277,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if now.Sub(m.lastHorizonFetch) > 5*time.Minute && !m.hzLoading {
 			m.hzLoading = true
 			cmds = append(cmds, fetchHorizons(m.horizonsClient))
+		}
+		if now.Sub(m.lastHorizonPathFetch) > 5*time.Minute && !m.hzPathLoading {
+			m.hzPathLoading = true
+			cmds = append(cmds, fetchHorizonPath(m.horizonsClient))
 		}
 		if now.Sub(m.lastSWFetch) > 5*time.Minute && !m.swLoading {
 			m.swLoading = true
@@ -282,6 +300,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.dsnStatus = msg.status
 			m.dsnErr = nil
+			if msg.status.Range > 0 {
+				m.dsnRangeHistory = appendMetricHistory(m.dsnRangeHistory, msg.status.Range)
+			}
+			if msg.status.RTLT > 0 {
+				m.rtltHistory = appendMetricHistory(m.rtltHistory, msg.status.RTLT)
+			}
+			if rate := activeDSNRate(msg.status); rate > 0 {
+				m.dsnRateHistory = appendMetricHistory(m.dsnRateHistory, rate)
+			}
 		}
 		m.buildCache()
 
@@ -299,12 +326,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.speedHistory) > maxSpeedHistory {
 				m.speedHistory = m.speedHistory[len(m.speedHistory)-maxSpeedHistory:]
 			}
+			if radial, ok := radialVelocity(msg.state.Position, msg.state.Velocity); ok {
+				m.radialHistory = appendMetricHistory(m.radialHistory, radial)
+			}
 
 			// Append to position trail ring buffer.
 			m.positionTrail = append(m.positionTrail, msg.state.Position)
 			if len(m.positionTrail) > maxPositionTrail {
 				m.positionTrail = m.positionTrail[len(m.positionTrail)-maxPositionTrail:]
 			}
+		}
+		m.buildCache()
+
+	case horizonsPathMsg:
+		m.hzPathLoading = false
+		m.lastHorizonPathFetch = time.Now()
+		if msg.err != nil {
+			m.hzPathErr = msg.err
+		} else {
+			m.trajectoryPath = msg.points
+			m.hzPathErr = nil
 		}
 		m.buildCache()
 
@@ -356,6 +397,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func appendMetricHistory(history []float64, value float64) []float64 {
+	history = append(history, value)
+	if len(history) > maxMetricHistory {
+		history = history[len(history)-maxMetricHistory:]
+	}
+	return history
+}
+
+func activeDSNRate(status *dsn.Status) float64 {
+	if status == nil {
+		return 0
+	}
+	for _, dish := range status.Dishes {
+		for _, signal := range dish.DownSignals {
+			if signal.Active && signal.DataRate > 0 {
+				return signal.DataRate
+			}
+		}
+	}
+	return 0
 }
 
 func (m *Model) handleBlogNotification(status *nasablog.Status) tea.Cmd {
@@ -453,50 +516,31 @@ func (m *Model) buildCache() {
 		panelCrew:         measureHeight(m.cachedCrew),
 	}
 
-	// Measure always-visible panels for the fixed height budget.
 	header := renderHeader(w)
 	topRow := renderTopRow(*m, w)
-	fixedHeight := measureHeight(header) + measureHeight(topRow) + 1 // +1 for help line
 
-	// Phase 3: Layout decides which fixed panels fit; trajectory gets remaining space.
-	var trajectoryAvail int
-	m.layout, trajectoryAvail = computeLayout(w, m.height, fixedHeight, measured)
+	if m.visualizationFullscreen {
+		m.buildFullscreenLayout(w, header)
+	} else {
+		fixedHeight := measureHeight(header) + measureHeight(topRow) + 1 // +1 for help line
 
-	// Phase 4: Render trajectory at the allocated height (flex panel).
-	m.cachedTrajectory = ""
-	if m.layout[panelTrajectory].visible {
-		plotH := trajectoryAvail - 3 // subtract border(2) + title(1)
-		if plotH < 6 {
-			plotH = 6
-		}
-		for plotH >= 6 {
-			switch m.trajectoryView {
-			case 1:
-				m.cachedTrajectory = renderOrbitalPanel(*m, w, plotH)
-			case 2:
-				m.cachedTrajectory = renderInstrumentPanel(*m, w, plotH)
-			default:
-				m.cachedTrajectory = renderTrajectoryPanel(*m, w, plotH)
-			}
+		// Phase 3: Layout decides which fixed panels fit; trajectory gets remaining space.
+		var trajectoryAvail int
+		m.layout, trajectoryAvail = computeLayout(w, m.height, fixedHeight, measured)
 
-			actualHeight := measureHeight(m.cachedTrajectory)
-			if actualHeight <= trajectoryAvail {
+		// Phase 4: Render trajectory at the allocated height (flex panel).
+		m.cachedTrajectory = ""
+		if m.layout[panelTrajectory].visible {
+			m.cachedTrajectory = m.renderCachedTrajectoryPanel(trajectoryAvail)
+			if actualHeight := measureHeight(m.cachedTrajectory); actualHeight > 0 {
 				m.layout[panelTrajectory] = panelLayout{visible: true, height: actualHeight, width: w}
-				break
-			}
-
-			plotH -= actualHeight - trajectoryAvail
-			if plotH < 6 {
-				m.cachedTrajectory = ""
-				m.layout[panelTrajectory] = panelLayout{visible: false, height: 0, width: w}
-				break
 			}
 		}
 	}
 
 	// Store effective width for View().
 	m.layout[panelHeader] = panelLayout{visible: true, height: measureHeight(header), width: w}
-	m.layout[panelTopRow] = panelLayout{visible: true, height: measureHeight(topRow), width: w}
+	m.layout[panelTopRow] = panelLayout{visible: !m.visualizationFullscreen, height: measureHeight(topRow), width: w}
 	m.layout[panelHelp] = panelLayout{visible: true, height: 1, width: w}
 
 	// Clear hidden panels.
@@ -517,6 +561,57 @@ func (m *Model) buildCache() {
 	}
 }
 
+func (m *Model) buildFullscreenLayout(w int, header string) {
+	m.layout = map[panelID]panelLayout{
+		panelDSN:          {visible: false, height: 0, width: w},
+		panelTimeline:     {visible: false, height: 0, width: w},
+		panelSpaceWeather: {visible: false, height: 0, width: w},
+		panelMissionLog:   {visible: false, height: 0, width: w},
+		panelCrew:         {visible: false, height: 0, width: w},
+		panelTopRow:       {visible: false, height: 0, width: w},
+	}
+
+	available := m.height - measureHeight(header) - 1 // footer
+	if available < 0 {
+		available = 0
+	}
+
+	const minTrajectoryH = 9
+	m.cachedTrajectory = ""
+	if available >= minTrajectoryH {
+		m.cachedTrajectory = m.renderCachedTrajectoryPanel(available)
+		if actualHeight := measureHeight(m.cachedTrajectory); actualHeight > 0 && actualHeight <= available {
+			m.layout[panelTrajectory] = panelLayout{visible: true, height: actualHeight, width: w}
+			return
+		}
+	}
+
+	m.layout[panelTrajectory] = panelLayout{visible: false, height: 0, width: w}
+}
+
+func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
+	if availableHeight < 9 {
+		return ""
+	}
+
+	plotH := availableHeight - 3
+	if plotH < 6 {
+		plotH = 6
+	}
+
+	for plotH >= 6 {
+		panel := renderVisualizationPanel(m, m.width, plotH, m.visualizationFullscreen)
+		actualHeight := measureHeight(panel)
+		if actualHeight <= availableHeight {
+			return panel
+		}
+
+		plotH -= actualHeight - availableHeight
+	}
+
+	return ""
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
@@ -535,6 +630,32 @@ func fetchHorizons(client *horizons.Client) tea.Cmd {
 		state, err := client.Fetch()
 		return horizonsMsg{state: state, err: err}
 	}
+}
+
+func fetchHorizonPath(client *horizons.Client) tea.Cmd {
+	return func() tea.Msg {
+		start, stop := trajectoryPathWindow(time.Now())
+		points, err := client.FetchTrajectoryPath(start, stop, trajectoryPathSample)
+		return horizonsPathMsg{points: points, err: err}
+	}
+}
+
+func trajectoryPathWindow(now time.Time) (time.Time, time.Time) {
+	start := mission.LaunchTime.UTC()
+	stop := now.UTC()
+	missionEnd := mission.LaunchTime.Add(mission.Timeline[len(mission.Timeline)-1].METOffset).UTC()
+
+	if stop.After(missionEnd) {
+		stop = missionEnd
+	}
+	if stop.Before(start.Add(trajectoryPathSample)) {
+		stop = start.Add(trajectoryPathSample)
+		if stop.After(missionEnd) {
+			stop = missionEnd
+		}
+	}
+
+	return start, stop
 }
 
 func fetchSW(client *spaceweather.Client) tea.Cmd {

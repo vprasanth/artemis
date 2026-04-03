@@ -90,6 +90,10 @@ The client requests a narrow window around `now` and selects the ephemeris
 sample closest to the current time rather than assuming the first sample is the
 right one.
 
+The trajectory view also fetches an Earth-centered time series across the
+mission window so its path line comes from sampled Horizons positions rather
+than only the short live trail collected since startup.
+
 `MoonPosition` is the spacecraft position in the Moon-centered frame. To derive
 the Moon's Earth-centered position, subtract it from the Earth-centered
 spacecraft vector. To derive the spacecraft→Moon vector, negate it.

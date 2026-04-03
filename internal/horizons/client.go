@@ -109,6 +109,19 @@ func (c *Client) Fetch() (*State, error) {
 	return earthState, nil
 }
 
+func (c *Client) FetchTrajectoryPath(start, stop time.Time, step time.Duration) ([]Vector3, error) {
+	samples, err := c.fetchVectorSeries(start.UTC(), stop.UTC(), step, "500@399")
+	if err != nil {
+		return nil, err
+	}
+
+	points := make([]Vector3, 0, len(samples))
+	for _, sample := range samples {
+		points = append(points, sample.Position)
+	}
+	return points, nil
+}
+
 func (c *Client) fetchVectors(target time.Time, center string) (*State, error) {
 	start := target.Add(-1 * time.Minute)
 	stop := target.Add(1 * time.Minute)
@@ -140,9 +153,64 @@ func (c *Client) fetchVectors(target time.Time, center string) (*State, error) {
 	return parseVectors(string(body), target)
 }
 
+func (c *Client) fetchVectorSeries(start, stop time.Time, step time.Duration, center string) ([]State, error) {
+	params := url.Values{}
+	params.Set("format", "text")
+	params.Set("COMMAND", "'"+SpacecraftID+"'")
+	params.Set("MAKE_EPHEM", "'YES'")
+	params.Set("EPHEM_TYPE", "'VECTORS'")
+	params.Set("CENTER", "'"+center+"'")
+	params.Set("START_TIME", "'"+start.Format("2006-01-02 15:04")+"'")
+	params.Set("STOP_TIME", "'"+stop.Format("2006-01-02 15:04")+"'")
+	params.Set("STEP_SIZE", "'"+formatStepSize(step)+"'")
+	params.Set("REF_PLANE", "'ECLIPTIC'")
+	params.Set("VEC_TABLE", "'2'")
+
+	reqURL := apiURL + "?" + params.Encode()
+	resp, err := c.httpClient.Get(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("horizons fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("horizons read: %w", err)
+	}
+
+	return parseVectorSamples(string(body))
+}
+
 var soeRegex = regexp.MustCompile(`(?s)\$\$SOE\s*\n(.*?)\n\s*\$\$EOE`)
 
 func parseVectors(text string, target time.Time) (*State, error) {
+	samples, err := parseVectorSamples(text)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		bestSample *State
+		bestDelta  time.Duration
+	)
+
+	for i := range samples {
+		state := samples[i]
+		delta := absDuration(state.Time.Sub(target))
+		if bestSample == nil || delta < bestDelta {
+			bestSample = &state
+			bestDelta = delta
+		}
+	}
+
+	if bestSample == nil {
+		return nil, fmt.Errorf("no parseable ephemeris samples found")
+	}
+
+	return bestSample, nil
+}
+
+func parseVectorSamples(text string) ([]State, error) {
 	matches := soeRegex.FindStringSubmatch(text)
 	if len(matches) < 2 {
 		return nil, fmt.Errorf("no ephemeris data found between $$SOE and $$EOE")
@@ -151,15 +219,7 @@ func parseVectors(text string, target time.Time) (*State, error) {
 	block := strings.TrimSpace(matches[1])
 	lines := strings.Split(block, "\n")
 
-	// Each sample is three logical lines:
-	// 2461132.916666667 = A.D. 2026-Apr-02 10:00:00.0000 TDB
-	//  X = ... Y = ... Z = ...
-	//  VX= ... VY= ... VZ= ...
-	var (
-		bestSample *State
-		bestDelta  time.Duration
-	)
-
+	var samples []State
 	for i := 0; i+2 < len(lines); i++ {
 		timeLine := strings.TrimSpace(lines[i])
 		if !strings.Contains(timeLine, "A.D.") {
@@ -171,26 +231,21 @@ func parseVectors(text string, target time.Time) (*State, error) {
 			continue
 		}
 
-		state := &State{
+		state := State{
 			Time:     sampleTime,
 			Position: parseXYZ(lines[i+1], "X", "Y", "Z"),
 			Velocity: parseXYZ(lines[i+2], "VX", "VY", "VZ"),
 		}
 		state.EarthDist = state.Position.Magnitude()
 		state.Speed = state.Velocity.Magnitude()
-
-		delta := absDuration(sampleTime.Sub(target))
-		if bestSample == nil || delta < bestDelta {
-			bestSample = state
-			bestDelta = delta
-		}
+		samples = append(samples, state)
 	}
 
-	if bestSample == nil {
+	if len(samples) == 0 {
 		return nil, fmt.Errorf("no parseable ephemeris samples found")
 	}
 
-	return bestSample, nil
+	return samples, nil
 }
 
 func parseXYZ(line, xKey, yKey, zKey string) Vector3 {
@@ -230,4 +285,32 @@ func absDuration(d time.Duration) time.Duration {
 		return -d
 	}
 	return d
+}
+
+func formatStepSize(step time.Duration) string {
+	if step <= 0 {
+		return "1 min"
+	}
+
+	if step%time.Hour == 0 {
+		hours := int(step / time.Hour)
+		if hours == 1 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", hours)
+	}
+
+	if step%time.Minute == 0 {
+		minutes := int(step / time.Minute)
+		if minutes == 1 {
+			return "1 min"
+		}
+		return fmt.Sprintf("%d min", minutes)
+	}
+
+	seconds := int(step / time.Second)
+	if seconds <= 1 {
+		return "1 sec"
+	}
+	return fmt.Sprintf("%d sec", seconds)
 }

@@ -97,8 +97,12 @@ func renderVelocityGauge(m Model, w, h int) string {
 	}
 
 	speed := 0.0
+	var velocity horizons.Vector3
+	var position horizons.Vector3
 	if m.hzState != nil {
 		speed = m.hzState.Speed
+		velocity = m.hzState.Velocity
+		position = m.hzState.Position
 	}
 
 	var lines []string
@@ -117,8 +121,25 @@ func renderVelocityGauge(m Model, w, h int) string {
 	lines = append(lines, gaugeFilledStyle.Render(fmt.Sprintf("%.3f", speed))+" "+dimStyle.Render("km/s")+
 		"  "+dimStyle.Render(fmt.Sprintf("(%.0f km/h)", speed*3600)))
 
-	// Blank separator
-	lines = append(lines, "")
+	if h >= 7 {
+		radial, ok := radialVelocity(position, velocity)
+		radialLine := dimStyle.Render("radial n/a")
+		if ok {
+			direction := "steady"
+			switch {
+			case radial > 0.005:
+				direction = "outbound"
+			case radial < -0.005:
+				direction = "inbound"
+			}
+			radialLine = dimStyle.Render("radial ") + gaugeFilledStyle.Render(fmt.Sprintf("%+.3f km/s", radial)) + dimStyle.Render(" "+direction)
+		}
+		lines = append(lines, radialLine)
+	}
+
+	if h >= 8 {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("vx %+.2f  vy %+.2f  vz %+.2f", velocity.X, velocity.Y, velocity.Z)))
+	}
 
 	// Sparkline from speed history
 	if len(m.speedHistory) > 1 {
@@ -130,6 +151,11 @@ func renderVelocityGauge(m Model, w, h int) string {
 
 		mn, avg, mx := minAvgMax(m.speedHistory)
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("min:%.3f avg:%.3f max:%.3f", mn, avg, mx)))
+	}
+
+	if h >= 10 && len(m.radialHistory) > 1 {
+		lines = append(lines, dimStyle.Render("radial trend"))
+		lines = append(lines, sparklineStyle.Render(renderSparkline(m.radialHistory, sparklineWidth(m.radialHistory, w-4))))
 	}
 
 	return style.Render(strings.Join(lines, "\n"))
@@ -145,9 +171,11 @@ func renderRangeFinder(m Model, w, h int) string {
 
 	earthDist := 0.0
 	moonDist := 0.0
+	moonBaseline := 0.0
 	if m.hzState != nil {
 		earthDist = effectiveEarthDist(m)
 		moonDist = m.hzState.MoonDist
+		moonBaseline = moonEarthDistance(*m.hzState)
 	}
 
 	var lines []string
@@ -181,6 +209,26 @@ func renderRangeFinder(m Model, w, h int) string {
 		lines = append(lines, dimStyle.Render("rate ")+arrow)
 	}
 
+	if h >= 8 && earthDist > 0 && moonDist > 0 {
+		total := earthDist + moonDist
+		earthPct := 0.0
+		moonPct := 0.0
+		if total > 0 {
+			earthPct = earthDist / total * 100
+			moonPct = moonDist / total * 100
+		}
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("split E %.0f%%  M %.0f%%", earthPct, moonPct)))
+	}
+
+	if h >= 9 && moonBaseline > 0 {
+		lines = append(lines, dimStyle.Render("E-M baseline ")+dimStyle.Render(formatCompactDist(moonBaseline)))
+	}
+
+	if h >= 10 && len(m.dsnRangeHistory) > 1 {
+		lines = append(lines, dimStyle.Render("dsn range trend"))
+		lines = append(lines, sparklineStyle.Render(renderSparkline(m.dsnRangeHistory, sparklineWidth(m.dsnRangeHistory, w-4))))
+	}
+
 	return style.Render(strings.Join(lines, "\n"))
 }
 
@@ -202,9 +250,18 @@ func renderBearingDisplay(m Model, w, h int) string {
 
 	title := instTitleStyle.Render("BEARING") + " " + dimStyle.Render("ecliptic") +
 		"  " + gaugeFilledStyle.Render(fmt.Sprintf("HDG %.0f°", bearing))
+	subtitle := ""
+	if h >= 5 {
+		subtitle = dimStyle.Render("Earth-centered heading in the ecliptic plane")
+	}
+
+	prefixLines := 1
+	if subtitle != "" {
+		prefixLines++
+	}
 
 	// Use the full remaining box height for the compass rose and center it.
-	radius := (h - 2) / 2
+	radius := (h - prefixLines - 1) / 2
 	if radius < 2 {
 		radius = 2
 	}
@@ -222,7 +279,13 @@ func renderBearingDisplay(m Model, w, h int) string {
 		canvasRows = append(canvasRows, joinCanvasRow(row))
 	}
 
-	return style.Render(title + "\n" + centerCanvasBlock(canvasRows, w))
+	lines := []string{title}
+	if subtitle != "" {
+		lines = append(lines, subtitle)
+	}
+	lines = append(lines, centerCanvasBlock(canvasRows, w))
+
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Signal Health ---
@@ -285,6 +348,16 @@ func renderSignalHealth(m Model, w, h int) string {
 		}
 	} else {
 		lines = append(lines, dimStyle.Render("Rate: ---"))
+	}
+
+	if h >= 6 && len(m.rtltHistory) > 1 {
+		lines = append(lines, dimStyle.Render("RTLT trend"))
+		lines = append(lines, sparklineStyle.Render(renderSparkline(m.rtltHistory, sparklineWidth(m.rtltHistory, w-4))))
+	}
+
+	if h >= 8 && len(m.dsnRateHistory) > 1 {
+		lines = append(lines, dimStyle.Render("downlink trend"))
+		lines = append(lines, sparklineStyle.Render(renderSparkline(m.dsnRateHistory, sparklineWidth(m.dsnRateHistory, w-4))))
 	}
 
 	return style.Render(strings.Join(lines, "\n"))
@@ -360,9 +433,18 @@ func renderProximityScope(m Model, w, h int) string {
 	}
 
 	title := instTitleStyle.Render("PROXIMITY")
+	subtitle := ""
+	if h >= 5 {
+		subtitle = dimStyle.Render("Moon relative to Orion; center = spacecraft")
+	}
+
+	prefixLines := 1
+	if subtitle != "" {
+		prefixLines++
+	}
 
 	// Radar-style scope fills the remaining box height and is centered.
-	radius := (h - 2) / 2
+	radius := (h - prefixLines - 1) / 2
 	if radius < 2 {
 		radius = 2
 	}
@@ -380,7 +462,13 @@ func renderProximityScope(m Model, w, h int) string {
 		canvasRows = append(canvasRows, joinCanvasRow(row))
 	}
 
-	return style.Render(title + "\n" + centerCanvasBlock(canvasRows, w))
+	lines := []string{title}
+	if subtitle != "" {
+		lines = append(lines, subtitle)
+	}
+	lines = append(lines, centerCanvasBlock(canvasRows, w))
+
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // --- Helper Functions ---
@@ -443,6 +531,16 @@ func renderSparkline(data []float64, width int) string {
 		sb.WriteRune(blocks[idx])
 	}
 	return sb.String()
+}
+
+func sparklineWidth(data []float64, width int) int {
+	if width < 1 {
+		return 1
+	}
+	if width > len(data) {
+		return len(data)
+	}
+	return width
 }
 
 // renderHBar renders a horizontal bar gauge.
@@ -592,6 +690,15 @@ func moonRelativeVector(moonPosition horizons.Vector3) horizons.Vector3 {
 		Y: -moonPosition.Y,
 		Z: -moonPosition.Z,
 	}
+}
+
+func moonEarthDistance(state horizons.State) float64 {
+	moonEarth := horizons.Vector3{
+		X: state.Position.X - state.MoonPosition.X,
+		Y: state.Position.Y - state.MoonPosition.Y,
+		Z: state.Position.Z - state.MoonPosition.Z,
+	}
+	return moonEarth.Magnitude()
 }
 
 // minAvgMax returns the min, average, and max of a slice.

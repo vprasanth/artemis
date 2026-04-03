@@ -34,10 +34,14 @@ func (m Model) View() string {
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
-	topRow := renderTopRow(m, w)
 
 	var sections []string
-	sections = append(sections, header, topRow)
+	sections = append(sections, header)
+
+	if !m.visualizationFullscreen {
+		topRow := renderTopRow(m, w)
+		sections = append(sections, topRow)
+	}
 
 	if pl := m.layout[panelSpaceWeather]; pl.visible {
 		sections = append(sections, m.cachedSW)
@@ -77,6 +81,13 @@ func renderFooter(m Model, w int) string {
 	if m.notificationsEnabled {
 		notifyState = "on"
 	}
+	fullscreenWide := "f fullscreen"
+	fullscreenCompact := "f full"
+	fullscreenTight := "f"
+	if m.visualizationFullscreen {
+		fullscreenWide = "f windowed"
+		fullscreenCompact = "f win"
+	}
 	viewWide := "v view"
 	viewCompact := "v view"
 	viewTight := "v"
@@ -104,6 +115,7 @@ func renderFooter(m Model, w int) string {
 			"q/esc quit",
 			"t timeline",
 			viewWide,
+			fullscreenWide,
 			notifyWide,
 			debugWide,
 			fmt.Sprintf("c theme(%s)", theme),
@@ -119,6 +131,7 @@ func renderFooter(m Model, w int) string {
 			"q quit",
 			"t tl",
 			viewCompact,
+			fullscreenCompact,
 			notifyCompact,
 			debugCompact,
 			fmt.Sprintf("c %s", theme),
@@ -131,7 +144,7 @@ func renderFooter(m Model, w int) string {
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			joinFooterParts("q", "t", viewTight, notifyTight, debugTight, "c", "s", "r", "log"),
+			joinFooterParts("q", "t", viewTight, fullscreenTight, notifyTight, debugTight, "c", "s", "r", "log"),
 			notificationError,
 			hiddenCompact,
 			uptimeCompact,
@@ -185,6 +198,9 @@ func formatFooterUptime(d time.Duration) string {
 }
 
 func hiddenPanelSummary(m Model, compact bool) string {
+	if m.visualizationFullscreen {
+		return ""
+	}
 	if m.layout == nil {
 		return ""
 	}
@@ -487,21 +503,63 @@ func renderTimelinePanel(w int) string {
 }
 
 func renderTrajectoryPanel(m Model, w int, plotH int) string {
+	return renderVisualizationPanel(m, w, plotH, false)
+}
+
+func renderVisualizationPanel(m Model, w, plotH int, fullscreen bool) string {
 	plotW := innerWidthFor(panelStyle, w)
 	if plotW < 30 {
 		plotW = 30
 	}
 
-	plot := renderTrajectory(m, plotW, plotH)
+	title, legend := visualizationMeta(m, fullscreen)
+	plot := renderVisualizationBody(m, plotW, plotH)
+	body := plot
 
-	legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
-		moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
-		spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
-		dimStyle.Render("s: stars")
+	if fullscreen {
+		topRow := renderTopRow(m, plotW)
+		body = lipgloss.JoinVertical(lipgloss.Left, plot, topRow)
+	}
 
 	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
-		panelTitleStyle.Render("TRAJECTORY") + "  " + legend + "\n" + plot,
+		panelTitleStyle.Render(title) + "  " + legend + "\n" + body,
 	)
+}
+
+func renderVisualizationBody(m Model, plotW, plotH int) string {
+	switch m.trajectoryView {
+	case 1:
+		return renderOrbitalMap(m, plotW, plotH)
+	case 2:
+		return renderInstruments(m, plotW, plotH)
+	default:
+		return renderTrajectory(m, plotW, plotH)
+	}
+}
+
+func visualizationMeta(m Model, fullscreen bool) (string, string) {
+	fullscreenHint := "  " + dimStyle.Render("f: fullscreen")
+	if fullscreen {
+		fullscreenHint = "  " + dimStyle.Render("f: windowed")
+	}
+
+	switch m.trajectoryView {
+	case 1:
+		legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
+			moonGlyphStyle.Render("{M}") + dimStyle.Render("=Moon  ") +
+			spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
+			dimStyle.Render("s: stars  v: switch view") + fullscreenHint
+		return "ORBITAL CONTEXT", legend
+	case 2:
+		legend := dimStyle.Render("v: switch view") + fullscreenHint
+		return "INSTRUMENTS", legend
+	default:
+		legend := earthGlyphStyle.Render("(E)") + dimStyle.Render("=Earth  ") +
+			moonGlyphStyle.Render("[M]") + dimStyle.Render("=Moon  ") +
+			spacecraftBright.Render("*") + dimStyle.Render("=Orion  ") +
+			dimStyle.Render("s: stars  v: switch view") + fullscreenHint
+		return "TRAJECTORY", legend
+	}
 }
 
 func renderCrewPanel(w int) string {

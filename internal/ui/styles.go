@@ -321,10 +321,12 @@ func applyTheme(id ThemeID) {
 		Foreground(colorRed)
 
 	pathOutboundStyle = lipgloss.NewStyle().
-		Foreground(colorCyan)
+		Bold(true).
+		Foreground(colorAccent)
 
 	pathReturnStyle = lipgloss.NewStyle().
-		Foreground(colorSecondary)
+		Bold(true).
+		Foreground(colorYellow)
 
 	trajectoryLabelStyle = lipgloss.NewStyle().
 		Foreground(colorMuted)

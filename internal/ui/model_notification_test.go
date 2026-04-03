@@ -8,6 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"artemis/internal/dsn"
+	"artemis/internal/horizons"
 	"artemis/internal/mission"
 	"artemis/internal/nasablog"
 )
@@ -282,5 +284,90 @@ func TestNotificationCommandSelectsSupportedPlatforms(t *testing.T) {
 
 	if unsupported := notificationCommand("windows", "Mission Update", "Crew ready"); unsupported != nil {
 		t.Fatalf("expected unsupported OS to return nil, got %#v", unsupported)
+	}
+}
+
+func TestUpdateStoresTrajectoryPathAndRefreshTime(t *testing.T) {
+	before := time.Now()
+	model, cmd := Model{}.Update(horizonsPathMsg{
+		points: []horizons.Vector3{{X: 1}, {X: 2}, {X: 3}},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for trajectory path update")
+	}
+
+	got := model.(Model)
+	if len(got.trajectoryPath) != 3 {
+		t.Fatalf("expected trajectory path to be stored, got %d points", len(got.trajectoryPath))
+	}
+	if got.hzPathErr != nil {
+		t.Fatalf("expected no trajectory path error, got %v", got.hzPathErr)
+	}
+	if got.lastHorizonPathFetch.Before(before) {
+		t.Fatalf("expected trajectory path refresh time to be updated, got %v before %v", got.lastHorizonPathFetch, before)
+	}
+}
+
+func TestUpdateTracksHorizonsAndDSNMetricHistories(t *testing.T) {
+	model, cmd := Model{}.Update(horizonsMsg{
+		state: &horizons.State{
+			Position: horizons.Vector3{X: 1000, Y: 0, Z: 0},
+			Velocity: horizons.Vector3{X: 2.5, Y: 0.1, Z: 0},
+			Speed:    2.502,
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for horizons update")
+	}
+
+	got := model.(Model)
+	if len(got.speedHistory) != 1 || got.speedHistory[0] != 2.502 {
+		t.Fatalf("unexpected speed history: %#v", got.speedHistory)
+	}
+	if len(got.radialHistory) != 1 || got.radialHistory[0] != 2.5 {
+		t.Fatalf("unexpected radial history: %#v", got.radialHistory)
+	}
+
+	model, cmd = got.Update(dsnMsg{
+		status: &dsn.Status{
+			Range: 42000,
+			RTLT:  0.35,
+			Dishes: []dsn.Dish{
+				{
+					DownSignals: []dsn.Signal{{Active: true, DataRate: 2_000_000}},
+				},
+			},
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for dsn update")
+	}
+
+	got = model.(Model)
+	if len(got.dsnRangeHistory) != 1 || got.dsnRangeHistory[0] != 42000 {
+		t.Fatalf("unexpected DSN range history: %#v", got.dsnRangeHistory)
+	}
+	if len(got.rtltHistory) != 1 || got.rtltHistory[0] != 0.35 {
+		t.Fatalf("unexpected RTLT history: %#v", got.rtltHistory)
+	}
+	if len(got.dsnRateHistory) != 1 || got.dsnRateHistory[0] != 2_000_000 {
+		t.Fatalf("unexpected DSN rate history: %#v", got.dsnRateHistory)
+	}
+}
+
+func TestTrajectoryPathWindowClampsToFlownMissionSpan(t *testing.T) {
+	start, stop := trajectoryPathWindow(mission.LaunchTime.Add(25 * time.Hour))
+	if !start.Equal(mission.LaunchTime.UTC()) {
+		t.Fatalf("start = %v, want %v", start, mission.LaunchTime.UTC())
+	}
+	wantStop := mission.LaunchTime.Add(25 * time.Hour).UTC()
+	if !stop.Equal(wantStop) {
+		t.Fatalf("stop = %v, want %v", stop, wantStop)
+	}
+
+	_, afterMissionStop := trajectoryPathWindow(mission.LaunchTime.Add(20 * 24 * time.Hour))
+	wantEnd := mission.LaunchTime.Add(mission.Timeline[len(mission.Timeline)-1].METOffset).UTC()
+	if !afterMissionStop.Equal(wantEnd) {
+		t.Fatalf("after-mission stop = %v, want %v", afterMissionStop, wantEnd)
 	}
 }

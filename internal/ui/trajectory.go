@@ -10,9 +10,10 @@ import (
 	"artemis/internal/horizons"
 )
 
-// renderTrajectory projects live Earth-centered Horizons vectors into the
-// current Earth-Moon frame. Earth and Moon remain anchored for readability,
-// while Orion and its recent trail are plotted from the actual state vectors.
+// renderTrajectory fits the Earth-centered Horizons mission arc into the panel.
+// Earth stays at the origin, while the Moon, Orion, and the sampled path are
+// projected from the same ecliptic XY coordinates so the visible trace matches
+// the fetched trajectory data.
 func renderTrajectory(m Model, plotW, plotH int) string {
 	// String canvas: each cell holds a plain " " or a styled character.
 	canvas := make([][]string, plotH)
@@ -30,14 +31,19 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 		placeStars(canvas, plotW, plotH, 0)
 	}
 
-	frame := buildTrajectoryFrame(m.hzState, m.positionTrail, plotW, plotH)
+	path := trajectoryPositions(m)
+	frame := buildTrajectoryFrame(m.hzState, path, plotW, plotH)
 
-	// Layer 2: Recent trail using live Horizons positions.
-	plotTrail(canvas, frame, m.positionTrail, m.hzState, plotW, plotH)
+	// Layer 2: Sampled mission path using Earth-centered Horizons positions.
+	plotPath(canvas, frame, path, plotW, plotH)
 
 	// Layer 3: Earth and Moon glyphs (overwrite path).
-	placeGlyph(canvas, frame.earthX, frame.centerY, plotW, "E", "(", ")", earthGlyphStyle)
-	placeGlyph(canvas, frame.moonX, frame.centerY, plotW, "M", "[", "]", moonGlyphStyle)
+	earthPoint := frame.project(horizons.Vector3{})
+	placeGlyph(canvas, earthPoint.x, earthPoint.y, plotW, "E", "(", ")", earthGlyphStyle)
+	if moonVec, ok := earthMoonVector(m.hzState); ok {
+		moonPoint := frame.project(moonVec)
+		placeGlyph(canvas, moonPoint.x, moonPoint.y, plotW, "M", "[", "]", moonGlyphStyle)
+	}
 
 	// Layer 4: Distance labels.
 	if plotH >= 10 {
@@ -46,21 +52,25 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 		if m.hzState != nil {
 			moonDist = m.hzState.MoonDist
 		}
-		placeLabel(canvas, frame.earthX, frame.centerY+2, earthDist, plotW, plotH)
-		placeLabel(canvas, frame.moonX, frame.centerY-2, moonDist, plotW, plotH)
+		placeLabel(canvas, earthPoint.x, earthPoint.y+2, earthDist, plotW, plotH)
+		if moonVec, ok := earthMoonVector(m.hzState); ok {
+			moonPoint := frame.project(moonVec)
+			placeLabel(canvas, moonPoint.x, moonPoint.y-2, moonDist, plotW, plotH)
+		}
 	}
 
 	// Layer 5: Spacecraft (highest priority, pulsing).
 	if m.hzState != nil {
-		scPoint, ok := frame.project(m.hzState.Position)
-		if ok {
-			placeSpacecraft(canvas, scPoint.x, scPoint.y, plotW, plotH, m.tickCount, m.hzState.IsOccluded())
-		}
+		scPoint := frame.project(m.hzState.Position)
+		placeSpacecraft(canvas, scPoint.x, scPoint.y, plotW, plotH, m.tickCount, m.hzState.IsOccluded())
 	}
 
 	// Layer 6: Legend (bottom-right).
 	if plotW >= 40 && plotH >= 8 {
 		placeLegend(canvas, plotW, plotH)
+	}
+	if plotH >= 2 {
+		placeTrajectoryStatus(canvas, trajectoryPathStatus(m), plotW, plotH)
 	}
 
 	// Render canvas to string.
@@ -77,96 +87,136 @@ func renderTrajectory(m Model, plotW, plotH int) string {
 	return sb.String()
 }
 
+func trajectoryPositions(m Model) []horizons.Vector3 {
+	if len(m.trajectoryPath) > 1 {
+		return append([]horizons.Vector3(nil), m.trajectoryPath...)
+	}
+
+	positions := append([]horizons.Vector3{}, m.positionTrail...)
+	if m.hzState != nil {
+		if len(positions) == 0 || positions[len(positions)-1] != m.hzState.Position {
+			positions = append(positions, m.hzState.Position)
+		}
+	}
+	return positions
+}
+
+func trajectoryPathStatus(m Model) string {
+	switch {
+	case len(m.trajectoryPath) > 1:
+		return fmt.Sprintf("arc %d samples", len(m.trajectoryPath))
+	case m.hzPathLoading:
+		return "arc loading"
+	case m.hzPathErr != nil:
+		return "arc unavailable"
+	case len(trajectoryPositions(m)) > 1:
+		return "arc live trail"
+	default:
+		return "arc waiting"
+	}
+}
+
 type trajectoryFrame struct {
-	axisX   horizons.Vector3
-	axisY   horizons.Vector3
-	earthX  int
-	moonX   int
-	centerY int
-	scaleX  float64
-	scaleY  float64
+	centerX      int
+	centerY      int
+	worldCenterX float64
+	worldCenterY float64
+	scale        float64
+	aspect       float64
 }
 
 func buildTrajectoryFrame(state *horizons.State, trail []horizons.Vector3, plotW, plotH int) trajectoryFrame {
-	earthX := plotW * 6 / 50
-	moonX := plotW - plotW*8/50
-	centerY := plotH / 2
+	const (
+		aspectRatio = 0.5
+		defaultSpan = 384400.0
+	)
 
-	axisX := horizons.Vector3{X: 1, Y: 0}
-	axisY := horizons.Vector3{X: 0, Y: 1}
-	moonDist := 384400.0
-	if moonVec, ok := earthMoonVector(state); ok {
-		moonDist = math.Hypot(moonVec.X, moonVec.Y)
-		if moonDist > 0 {
-			axisX = horizons.Vector3{X: moonVec.X / moonDist, Y: moonVec.Y / moonDist}
-			axisY = horizons.Vector3{X: -axisX.Y, Y: axisX.X}
+	minX, maxX := 0.0, 0.0
+	minY, maxY := 0.0, 0.0
+	initialized := false
+	include := func(pos horizons.Vector3) {
+		if !initialized {
+			minX, maxX = pos.X, pos.X
+			minY, maxY = pos.Y, pos.Y
+			initialized = true
+			return
 		}
-	}
-	if moonDist <= 0 {
-		moonDist = 384400.0
+		minX = math.Min(minX, pos.X)
+		maxX = math.Max(maxX, pos.X)
+		minY = math.Min(minY, pos.Y)
+		maxY = math.Max(maxY, pos.Y)
 	}
 
-	scaleX := moonDist / float64(maxInt(1, moonX-earthX))
-	maxCross := moonDist * 0.05
+	include(horizons.Vector3{})
 	for _, pos := range trail {
-		_, cross := projectEarthMoonFrame(pos, axisX, axisY)
-		if absFloat(cross) > maxCross {
-			maxCross = absFloat(cross)
-		}
+		include(pos)
 	}
 	if state != nil {
-		_, cross := projectEarthMoonFrame(state.Position, axisX, axisY)
-		if absFloat(cross) > maxCross {
-			maxCross = absFloat(cross)
+		include(state.Position)
+		if moonVec, ok := earthMoonVector(state); ok {
+			include(moonVec)
 		}
 	}
-	halfHeight := maxInt(2, plotH/2-2)
-	scaleY := maxCross * 1.15 / float64(halfHeight)
-	if scaleY <= 0 {
-		scaleY = 1
+
+	if !initialized {
+		maxX = defaultSpan
+	}
+
+	spanX := maxX - minX
+	spanY := maxY - minY
+	if spanX < defaultSpan*0.1 {
+		pad := defaultSpan * 0.05
+		minX -= pad
+		maxX += pad
+		spanX = maxX - minX
+	}
+	if spanY < defaultSpan*0.1 {
+		pad := defaultSpan * 0.05
+		minY -= pad
+		maxY += pad
+		spanY = maxY - minY
+	}
+
+	padX := math.Max(defaultSpan*0.03, spanX*0.08)
+	padY := math.Max(defaultSpan*0.03, spanY*0.08)
+	minX -= padX
+	maxX += padX
+	minY -= padY
+	maxY += padY
+
+	usableW := float64(maxInt(8, plotW-6))
+	usableH := float64(maxInt(6, plotH-4))
+	scaleX := (maxX - minX) / usableW
+	scaleY := (maxY - minY) / (usableH / aspectRatio)
+	scale := math.Max(scaleX, scaleY)
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		scale = 1
 	}
 
 	return trajectoryFrame{
-		axisX:   axisX,
-		axisY:   axisY,
-		earthX:  earthX,
-		moonX:   moonX,
-		centerY: centerY,
-		scaleX:  scaleX,
-		scaleY:  scaleY,
+		centerX:      plotW / 2,
+		centerY:      plotH / 2,
+		worldCenterX: (minX + maxX) / 2,
+		worldCenterY: (minY + maxY) / 2,
+		scale:        scale,
+		aspect:       aspectRatio,
 	}
 }
 
-func (f trajectoryFrame) project(pos horizons.Vector3) (pathPoint, bool) {
-	along, cross := projectEarthMoonFrame(pos, f.axisX, f.axisY)
-	x := f.earthX + int(math.Round(along/f.scaleX))
-	y := f.centerY - int(math.Round(cross/f.scaleY))
-	return pathPoint{x: x, y: y}, x >= 0 && y >= 0
+func (f trajectoryFrame) project(pos horizons.Vector3) pathPoint {
+	x := f.centerX + int(math.Round((pos.X-f.worldCenterX)/f.scale))
+	y := f.centerY - int(math.Round((pos.Y-f.worldCenterY)/f.scale*f.aspect))
+	return pathPoint{x: x, y: y}
 }
 
-func plotTrail(canvas [][]string, frame trajectoryFrame, trail []horizons.Vector3, state *horizons.State, plotW, plotH int) {
-	positions := append([]horizons.Vector3{}, trail...)
-	if state != nil {
-		if len(positions) == 0 || positions[len(positions)-1] != state.Position {
-			positions = append(positions, state.Position)
-		}
-	}
+func plotPath(canvas [][]string, frame trajectoryFrame, positions []horizons.Vector3, plotW, plotH int) {
 	if len(positions) < 2 {
 		return
 	}
 
 	for i := 1; i < len(positions); i++ {
-		start, startOK := frame.project(positions[i-1])
-		end, endOK := frame.project(positions[i])
-		if !startOK || !endOK {
-			continue
-		}
-		if start.x < 0 || start.x >= plotW || start.y < 0 || start.y >= plotH {
-			continue
-		}
-		if end.x < 0 || end.x >= plotW || end.y < 0 || end.y >= plotH {
-			continue
-		}
+		start := frame.project(positions[i-1])
+		end := frame.project(positions[i])
 
 		style := pathOutboundStyle
 		ch := "·"
@@ -180,9 +230,10 @@ func plotTrail(canvas [][]string, frame trajectoryFrame, trail []horizons.Vector
 
 func drawTrailSegment(canvas [][]string, x0, y0, x1, y1, plotW, plotH int, style lipgloss.Style, ch string) {
 	steps := maxInt(absInt(x1-x0), absInt(y1-y0))
+	lineCh := segmentGlyph(x0, y0, x1, y1, ch)
 	if steps == 0 {
 		if x0 >= 0 && x0 < plotW && y0 >= 0 && y0 < plotH {
-			canvas[y0][x0] = style.Render(ch)
+			canvas[y0][x0] = style.Render(lineCh)
 		}
 		return
 	}
@@ -192,7 +243,7 @@ func drawTrailSegment(canvas [][]string, x0, y0, x1, y1, plotW, plotH int, style
 		x := int(math.Round(float64(x0) + (float64(x1-x0) * t)))
 		y := int(math.Round(float64(y0) + (float64(y1-y0) * t)))
 		if x >= 0 && x < plotW && y >= 0 && y < plotH {
-			canvas[y][x] = style.Render(ch)
+			canvas[y][x] = style.Render(lineCh)
 		}
 	}
 }
@@ -211,12 +262,6 @@ func earthMoonVector(state *horizons.State) (horizons.Vector3, bool) {
 		return horizons.Vector3{}, false
 	}
 	return moonVec, true
-}
-
-func projectEarthMoonFrame(pos, axisX, axisY horizons.Vector3) (float64, float64) {
-	along := pos.X*axisX.X + pos.Y*axisX.Y
-	cross := pos.X*axisY.X + pos.Y*axisY.Y
-	return along, cross
 }
 
 func placeStars(canvas [][]string, plotW, plotH int, tickCount uint64) {
@@ -277,6 +322,24 @@ func placeSpacecraft(canvas [][]string, x, y, plotW, plotH int, tickCount uint64
 	}
 }
 
+func segmentGlyph(x0, y0, x1, y1 int, fallback string) string {
+	dx := x1 - x0
+	dy := y1 - y0
+
+	switch {
+	case dx == 0 && dy == 0:
+		return fallback
+	case absInt(dy) > absInt(dx):
+		return "│"
+	case dy == 0:
+		return "─"
+	case (dx > 0 && dy > 0) || (dx < 0 && dy < 0):
+		return "╲"
+	default:
+		return "╱"
+	}
+}
+
 func placeLabel(canvas [][]string, cx, cy int, dist float64, plotW, plotH int) {
 	if dist <= 0 || cy < 0 || cy >= plotH {
 		return
@@ -306,8 +369,8 @@ func placeLegend(canvas [][]string, plotW, plotH int) {
 		ch    string
 		label string
 	}{
-		{pathOutboundStyle.Render("·"), " out"},
-		{pathReturnStyle.Render("∙"), " ret"},
+		{pathOutboundStyle.Render("─"), " out"},
+		{pathReturnStyle.Render("─"), " ret"},
 	}
 	startY := plotH - len(items)
 	startX := plotW - 6
@@ -326,6 +389,28 @@ func placeLegend(canvas [][]string, plotW, plotH int) {
 				canvas[y][x] = trajectoryLabelStyle.Render(string(ch))
 			}
 		}
+	}
+}
+
+func placeTrajectoryStatus(canvas [][]string, status string, plotW, plotH int) {
+	if status == "" || plotH <= 0 {
+		return
+	}
+	y := plotH - 1
+	if y < 0 || y >= len(canvas) {
+		return
+	}
+	startX := 1
+	maxWidth := plotW - 10
+	if maxWidth <= startX {
+		return
+	}
+	for _, ch := range status {
+		if startX >= maxWidth {
+			break
+		}
+		canvas[y][startX] = trajectoryLabelStyle.Render(string(ch))
+		startX++
 	}
 }
 

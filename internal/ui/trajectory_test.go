@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -25,22 +24,23 @@ func TestEarthMoonVectorUsesEarthAndMoonFrames(t *testing.T) {
 	}
 }
 
-func TestProjectEarthMoonFrameAlignsToCurrentMoonVector(t *testing.T) {
+func TestBuildTrajectoryFrameFitsPathBounds(t *testing.T) {
+	path := []horizons.Vector3{
+		{X: 0, Y: 0},
+		{X: 180000, Y: 70000},
+		{X: 360000, Y: -40000},
+	}
 	state := &horizons.State{
-		Position:     horizons.Vector3{X: 100000, Y: 100000, Z: 0},
-		MoonPosition: horizons.Vector3{X: -300000, Y: -300000, Z: 0},
+		Position:     horizons.Vector3{X: 210000, Y: 30000},
+		MoonPosition: horizons.Vector3{X: -140000, Y: 20000},
 	}
 
-	frame := buildTrajectoryFrame(state, nil, 80, 20)
-	point, ok := frame.project(state.Position)
-	if !ok {
-		t.Fatal("expected projected spacecraft point to be valid")
-	}
-	if point.y != frame.centerY {
-		t.Fatalf("projected Y = %d, want %d on Earth-Moon line", point.y, frame.centerY)
-	}
-	if point.x <= frame.earthX || point.x >= frame.moonX {
-		t.Fatalf("projected X = %d, want between earth=%d and moon=%d", point.x, frame.earthX, frame.moonX)
+	frame := buildTrajectoryFrame(state, path, 80, 20)
+	for _, pos := range path {
+		point := frame.project(pos)
+		if point.x < 0 || point.x >= 80 || point.y < 0 || point.y >= 20 {
+			t.Fatalf("projected point %+v = (%d,%d), want inside viewport", pos, point.x, point.y)
+		}
 	}
 }
 
@@ -52,17 +52,41 @@ func TestMoonRelativeVectorPointsFromSpacecraftToMoon(t *testing.T) {
 	}
 }
 
-func TestProjectEarthMoonFrameCrossTrack(t *testing.T) {
-	sqrtHalf := math.Sqrt(0.5)
-	axisX := horizons.Vector3{X: sqrtHalf, Y: sqrtHalf}
-	axisY := horizons.Vector3{X: -sqrtHalf, Y: sqrtHalf}
-
-	along, cross := projectEarthMoonFrame(horizons.Vector3{X: 100, Y: 100}, axisX, axisY)
-	if math.Abs(along-141.421356) > 0.001 {
-		t.Fatalf("along = %v, want about 141.421", along)
+func TestPlotPathDrawsVisibleSegmentWhenEndpointsProjectOffscreen(t *testing.T) {
+	canvas := make([][]string, 6)
+	for i := range canvas {
+		canvas[i] = make([]string, 12)
+		for j := range canvas[i] {
+			canvas[i][j] = " "
+		}
 	}
-	if math.Abs(cross) > 0.001 {
-		t.Fatalf("cross = %v, want about 0", cross)
+
+	frame := trajectoryFrame{
+		centerX:      6,
+		centerY:      3,
+		worldCenterX: 300000,
+		worldCenterY: 0,
+		scale:        25000,
+		aspect:       0.5,
+	}
+	path := []horizons.Vector3{
+		{X: 0, Y: 0},
+		{X: 600000, Y: 0},
+	}
+
+	plotPath(canvas, frame, path, 12, 6)
+
+	found := false
+	for _, row := range canvas {
+		for _, cell := range row {
+			if cell != " " {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected visible path segment inside viewport")
 	}
 }
 
@@ -108,3 +132,116 @@ func TestFormatCompactDist(t *testing.T) {
 		}
 	}
 }
+
+func TestTrajectoryPositionsPrefersMissionArc(t *testing.T) {
+	arc := []horizons.Vector3{{X: 10}, {X: 20}, {X: 30}}
+	m := Model{
+		trajectoryPath: arc,
+		positionTrail:  []horizons.Vector3{{X: 1}, {X: 2}},
+		hzState:        &horizons.State{Position: horizons.Vector3{X: 3}},
+	}
+
+	got := trajectoryPositions(m)
+	if len(got) != len(arc) {
+		t.Fatalf("len(trajectoryPositions()) = %d, want %d", len(got), len(arc))
+	}
+	if got[0].X != 10 || got[len(got)-1].X != 30 {
+		t.Fatalf("trajectoryPositions() = %+v, want mission arc", got)
+	}
+}
+
+func TestTrajectoryPathStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		m    Model
+		want string
+	}{
+		{
+			name: "sampled arc",
+			m: Model{
+				trajectoryPath: []horizons.Vector3{{X: 1}, {X: 2}},
+			},
+			want: "arc 2 samples",
+		},
+		{
+			name: "loading",
+			m: Model{
+				hzPathLoading: true,
+			},
+			want: "arc loading",
+		},
+		{
+			name: "unavailable",
+			m: Model{
+				hzPathErr: assertErr("boom"),
+			},
+			want: "arc unavailable",
+		},
+		{
+			name: "live trail fallback",
+			m: Model{
+				positionTrail: []horizons.Vector3{{X: 1}},
+				hzState:       &horizons.State{Position: horizons.Vector3{X: 2}},
+			},
+			want: "arc live trail",
+		},
+		{
+			name: "waiting",
+			m:    Model{},
+			want: "arc waiting",
+		},
+	}
+
+	for _, tc := range tests {
+		if got := trajectoryPathStatus(tc.m); got != tc.want {
+			t.Fatalf("%s: trajectoryPathStatus() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRenderTrajectoryShowsArcStatus(t *testing.T) {
+	m := Model{
+		hzPathErr: assertErr("path fetch failed"),
+	}
+
+	got := renderTrajectory(m, 60, 12)
+	if !strings.Contains(got, "arc unavailable") {
+		t.Fatalf("expected trajectory render to show arc status, got:\n%s", got)
+	}
+}
+
+func TestPlaceSpacecraftUsesSingleCellGlyph(t *testing.T) {
+	canvas := [][]string{{" ", " ", " ", " ", " "}}
+
+	placeSpacecraft(canvas, 2, 0, 5, 1, 0, false)
+
+	if canvas[0][2] == " " {
+		t.Fatalf("expected spacecraft glyph at center cell, got row=%q", strings.Join(canvas[0], ""))
+	}
+	if canvas[0][1] != " " || canvas[0][3] != " " {
+		t.Fatalf("expected single-cell spacecraft glyph, got row=%q", strings.Join(canvas[0], ""))
+	}
+}
+
+func TestSegmentGlyph(t *testing.T) {
+	cases := []struct {
+		x0, y0 int
+		x1, y1 int
+		want   string
+	}{
+		{0, 0, 3, 0, "─"},
+		{0, 0, 0, 3, "│"},
+		{0, 0, 3, 3, "╲"},
+		{0, 3, 3, 0, "╱"},
+	}
+
+	for _, tc := range cases {
+		if got := segmentGlyph(tc.x0, tc.y0, tc.x1, tc.y1, "·"); got != tc.want {
+			t.Fatalf("segmentGlyph((%d,%d)->(%d,%d)) = %q, want %q", tc.x0, tc.y0, tc.x1, tc.y1, got, tc.want)
+		}
+	}
+}
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }
