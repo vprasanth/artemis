@@ -1,16 +1,25 @@
 VERSION ?= $(shell git describe --tags --always --dirty)
 LDFLAGS  = -X main.version=$(VERSION)
 BINARY   = artemis
+PREFIX   ?= $(HOME)/.local
+BINDIR   ?= $(PREFIX)/bin
 CHANGELOG_FILE ?= CHANGELOG.md
 RELEASE_COMMIT_MSG ?= Prepare $(TAG) release
 
-.PHONY: build run clean release changelog changefile release-prep
+.PHONY: build run install uninstall clean release changelog changefile release-prep
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./main.go
 
 run: build
 	./$(BINARY)
+
+install: build
+	mkdir -p $(BINDIR)
+	install -m 0755 $(BINARY) $(BINDIR)/$(BINARY)
+
+uninstall:
+	rm -f $(BINDIR)/$(BINARY)
 
 clean:
 	rm -f $(BINARY) $(BINARY)-*

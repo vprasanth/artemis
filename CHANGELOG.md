@@ -2,7 +2,7 @@
 
 ## v0.7.0
 
-- update makefile with release-prep comamnd
+- update makefile with release-prep command
 - Add ops views and in-app mission log reader
 - Add runtime unit toggle for dashboard telemetry
 - Fix mission timing displays and trajectory context
