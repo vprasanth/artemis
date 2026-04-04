@@ -61,23 +61,42 @@ func (m Model) View() string {
 		sections = append(sections, topRow)
 	}
 
-	if pl := m.layout[panelSpaceWeather]; pl.visible {
-		sections = append(sections, m.cachedSW)
-	}
-	if pl := m.layout[panelDSN]; pl.visible {
-		sections = append(sections, m.cachedDSN)
+	if useWideTopQuad(w) {
+		// Weather and DSN already live in the 4-panel top row.
+	} else if useWideDashboardPairs(w) {
+		if pl := m.layout[panelOpsRow]; pl.visible {
+			sections = append(sections, m.cachedOpsRow)
+		}
+	} else {
+		if pl := m.layout[panelSpaceWeather]; pl.visible {
+			sections = append(sections, m.cachedSW)
+		}
+		if pl := m.layout[panelDSN]; pl.visible {
+			sections = append(sections, m.cachedDSN)
+		}
 	}
 	if pl := m.layout[panelTimeline]; pl.visible {
 		sections = append(sections, m.cachedTimeline)
 	}
-	if pl := m.layout[panelMissionLog]; pl.visible {
-		sections = append(sections, m.cachedBlog)
-	}
 	if pl := m.layout[panelTrajectory]; pl.visible {
 		sections = append(sections, m.cachedTrajectory)
 	}
-	if pl := m.layout[panelCrew]; pl.visible {
-		sections = append(sections, m.cachedCrew)
+	if useWideTopQuad(w) {
+		// Mission log is already packed into the main row on wide layouts.
+		if pl := m.layout[panelCrew]; pl.visible {
+			sections = append(sections, m.cachedCrew)
+		}
+	} else if useWideDashboardPairs(w) {
+		if pl := m.layout[panelInfoRow]; pl.visible {
+			sections = append(sections, m.cachedInfoRow)
+		}
+	} else {
+		if pl := m.layout[panelMissionLog]; pl.visible {
+			sections = append(sections, m.cachedBlog)
+		}
+		if pl := m.layout[panelCrew]; pl.visible {
+			sections = append(sections, m.cachedCrew)
+		}
 	}
 
 	help := renderFooter(m, w)
@@ -229,6 +248,7 @@ func renderFooter(m Model, w int) string {
 		joinFooterParts(
 			"q/esc quit",
 			"t timeline",
+			"+/- zoom",
 			viewWide,
 			fullscreenWide,
 			unitWide,
@@ -412,6 +432,10 @@ func renderHeaderAt(w int, met time.Duration) string {
 }
 
 func renderTopRow(m Model, w int) string {
+	if useWideTopQuad(w) {
+		return renderTopQuadRow(m, w)
+	}
+
 	clockW, spacecraftW := splitWidthEvenly(w)
 
 	clockPanel := renderClockPanel(clockW, 0)
@@ -428,14 +452,93 @@ func renderTopRow(m Model, w int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, clockPanel, spacecraftPanel)
 }
 
+func renderTopQuadRow(m Model, w int) string {
+	colW := w / 4
+	widths := []int{colW, colW, colW, w - (3 * colW)}
+
+	panels := []string{
+		renderClockPanelCompact(widths[0], mission.MET()),
+		renderSpaceWeatherPanel(m, widths[1]),
+		renderDSNPanel(m, widths[2]),
+		renderSpacecraftPanelCompact(m, widths[3]),
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, panels...)
+}
+
+func renderWideOpsRow(m Model, w int) string {
+	leftW, rightW := splitWidthEvenly(w)
+	left := renderSpaceWeatherPanel(m, leftW)
+	right := renderDSNPanel(m, rightW)
+	return joinEqualHeightPanels(left, right)
+}
+
+func renderWideInfoRow(m Model, w int) string {
+	leftW, rightW := splitWidthEvenly(w)
+	left := renderMissionLogPanel(m, leftW, 5, m.selectedLogEntry)
+	right := renderCrewPanel(rightW)
+	return joinEqualHeightPanels(left, right)
+}
+
+func renderWideMainRow(m Model, w, availableHeight int) string {
+	leftW := (w * 2) / 3
+	rightW := w - leftW
+
+	left := m.renderCachedTrajectoryPanelWidth(leftW, availableHeight)
+	right := renderMissionLogPanel(m, rightW, 8, m.selectedLogEntry)
+	return joinEqualHeightPanels(left, right)
+}
+
+func joinEqualHeightPanels(left, right string) string {
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
 func renderClockPanel(w, totalHeight int) string {
 	return renderClockPanelAt(w, totalHeight, mission.MET())
+}
+
+func renderClockPanelCompact(w int, met time.Duration) string {
+	day := mission.MissionDayAt(met)
+	totalDays := mission.TotalMissionDays()
+	nowUTC := mission.LaunchTime.Add(met).UTC()
+	localNow := nowUTC
+	localLabel := "Local"
+	if loc, err := time.LoadLocation("Europe/Prague"); err == nil {
+		localNow = nowUTC.In(loc)
+		localLabel = localNow.Format("MST")
+	}
+
+	next := mission.NextEvent(met)
+	nextLine := activeStyle.Render("Mission Complete")
+	if next != nil {
+		nextLine = labelStyle.Render("Next ") + valueStyle.Render(next.Label) +
+			dimStyle.Render("  in ") + metStyle.Render(mission.FormatCountdown(next.METOffset-met))
+	}
+
+	content := strings.Join([]string{
+		labelStyle.Render("MET ") + metStyle.Render(mission.FormatMET(met)) +
+			dimStyle.Render(fmt.Sprintf("  Day %d/%d", day, totalDays)),
+		labelStyle.Render("UTC ") + valueStyle.Render(nowUTC.Format("15:04:05")) +
+			dimStyle.Render("  ") + labelStyle.Render(localLabel+" ") + valueStyle.Render(localNow.Format("15:04:05")),
+		nextLine,
+	}, "\n")
+
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+		panelTitleStyle.Render("MISSION CLOCK") + "\n" + content,
+	)
 }
 
 func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
 	day := mission.MissionDayAt(met)
 	totalDays := mission.TotalMissionDays()
 	metStr := mission.FormatMET(met)
+	nowUTC := mission.LaunchTime.Add(met).UTC()
+	localNow := nowUTC
+	localLabel := "Local"
+	if loc, err := time.LoadLocation("Europe/Prague"); err == nil {
+		localNow = nowUTC.In(loc)
+		localLabel = localNow.Format("MST")
+	}
 
 	var nextLine string
 	next := mission.NextEvent(met)
@@ -451,11 +554,13 @@ func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
 		nextLine = activeStyle.Render("Mission Complete")
 	}
 
-	content := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n\n%s",
+	content := fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s",
 		labelStyle.Render("MET:"),
 		metStyle.Render(metStr),
 		labelStyle.Render("UTC:"),
-		valueStyle.Render(fmt.Sprintf("%s", mission.LaunchTime.Add(met).UTC().Format("2006-01-02 15:04:05"))),
+		valueStyle.Render(nowUTC.Format("2006-01-02 15:04:05")),
+		labelStyle.Render(localLabel+":"),
+		valueStyle.Render(localNow.Format("2006-01-02 15:04:05")),
 		labelStyle.Render("Day:"),
 		valueStyle.Render(fmt.Sprintf("%d / %d", day, totalDays)),
 		nextLine,
@@ -492,7 +597,7 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 				"  " + dimStyle.Render("acquisition of signal — Earth contact nominal")
 		}
 
-		content = fmt.Sprintf(
+		textContent := fmt.Sprintf(
 			"%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s  %s\n%s  %s\n%s  %s",
 			labelStyle.Render("Earth Dist:"),
 			valueStyle.Render(formatDist(earthDist, m.units)),
@@ -513,6 +618,7 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 			labelStyle.Render("Signal:    "),
 			signalStr,
 		)
+		content = renderSpacecraftContentWithDiagram(textContent, *s, earthDist, moonDist, m.units, w)
 	} else {
 		content = dimStyle.Render("Fetching spacecraft data...")
 	}
@@ -527,6 +633,125 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 	}
 
 	return style.Render(panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + content)
+}
+
+func renderSpacecraftPanelCompact(m Model, w int) string {
+	if m.hzErr != nil && m.hzState == nil {
+		return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+			panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + errorStyle.Render("Waiting for Horizons data..."),
+		)
+	}
+	if m.hzState == nil {
+		return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+			panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + dimStyle.Render("Fetching spacecraft data..."),
+		)
+	}
+
+	s := m.hzState
+	earthDist := effectiveEarthDist(m)
+	moonDist := s.MoonDist
+	signal := signalUpStyle.Render("AOS")
+	if s.IsOccluded() {
+		signal = signalDownStyle.Render("LOS")
+	}
+
+	lines := []string{
+		labelStyle.Render("E ") + valueStyle.Render(formatDist(earthDist, m.units)) +
+			dimStyle.Render("  ") + labelStyle.Render("M ") + valueStyle.Render(formatMoonDist(moonDist, m.units)),
+		labelStyle.Render("V ") + valueStyle.Render(formatSpeedForUnits(s.Speed, m.units)) +
+			dimStyle.Render("  ") + labelStyle.Render("RTLT ") + valueStyle.Render(compactRTLT(m)),
+		labelStyle.Render("Age ") + formatStateAge(m, time.Now()) +
+			dimStyle.Render("  ") + labelStyle.Render("Sig ") + signal,
+		renderDistanceDiagram(*s, earthDist, moonDist, m.units, innerWidthFor(panelStyle, w)),
+	}
+
+	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+		panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + strings.Join(lines, "\n"),
+	)
+}
+
+func compactRTLT(m Model) string {
+	if m.dsnStatus != nil && m.dsnStatus.RTLT > 0 {
+		return fmt.Sprintf("%.2f sec", m.dsnStatus.RTLT)
+	}
+	return "n/a"
+}
+
+func renderSpacecraftContentWithDiagram(text string, state horizons.State, earthDist, moonDist float64, units unitSystem, width int) string {
+	innerWidth := innerWidthFor(panelStyle, width)
+	if innerWidth < 84 {
+		return text
+	}
+
+	diagramW := innerWidth / 3
+	if diagramW < 24 {
+		return text
+	}
+	textW := innerWidth - diagramW
+	if textW < 42 {
+		return text
+	}
+
+	left := lipgloss.NewStyle().Width(textW).Render(text)
+	right := renderDistanceDiagram(state, earthDist, moonDist, units, diagramW)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+func renderDistanceDiagram(state horizons.State, earthDist, moonDist float64, units unitSystem, width int) string {
+	style := lipgloss.NewStyle().Width(width)
+	if width < 20 {
+		return style.Render("")
+	}
+
+	baseline := moonEarthDistance(state)
+	if baseline <= 0 {
+		baseline = earthDist + moonDist
+	}
+	if baseline <= 0 {
+		return style.Render("")
+	}
+
+	trackW := width - 2
+	if trackW < 12 {
+		trackW = 12
+	}
+
+	orionCol := int(float64(trackW-1) * earthDist / baseline)
+	if orionCol < 1 {
+		orionCol = 1
+	}
+	if orionCol > trackW-2 {
+		orionCol = trackW - 2
+	}
+
+	track := make([]string, trackW)
+	for i := range track {
+		track[i] = dimStyle.Render("─")
+	}
+	track[0] = earthGlyphStyle.Render("E")
+	track[trackW-1] = moonGlyphStyle.Render("M")
+	for i := 1; i < orionCol; i++ {
+		track[i] = earthGlyphStyle.Render("━")
+	}
+	for i := orionCol + 1; i < trackW-1; i++ {
+		track[i] = moonGlyphStyle.Render("━")
+	}
+	track[orionCol] = spacecraftBright.Render("O")
+
+	pointer := make([]string, trackW)
+	for i := range pointer {
+		pointer[i] = " "
+	}
+	pointer[orionCol] = ganttNowMarker.Render("▼")
+
+	lines := []string{
+		labelStyle.Render("Distance Track"),
+		strings.Join(pointer, ""),
+		strings.Join(track, ""),
+		labelStyle.Render("E ") + dimStyle.Render(formatCompactDist(earthDist, units)) +
+			labelStyle.Render("  M ") + dimStyle.Render(formatCompactDist(moonDist, units)),
+	}
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 func renderDSNPanel(m Model, w int) string {
@@ -646,8 +871,8 @@ func renderTimelinePanelAt(w int, met time.Duration) string {
 
 	content := strings.Join(lines, "\n")
 	return panelStyle.Width(w - 2).Render(
-		panelTitleStyle.Render("MISSION TIMELINE") +
-			"  " + dimStyle.Render("t: switch to gantt") + "\n" + content,
+		panelTitleStyle.Render("MISSION EVENT LIST") +
+			"  " + dimStyle.Render("t: switch to strip view") + "\n" + content,
 	)
 }
 

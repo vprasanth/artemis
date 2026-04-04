@@ -654,7 +654,7 @@ func TestTickRefreshesCachedTimeline(t *testing.T) {
 
 	m := Model{
 		width:     120,
-		height:    40,
+		height:    52,
 		showGantt: true,
 	}
 	m.buildCache()

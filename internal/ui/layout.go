@@ -15,6 +15,8 @@ const (
 	panelDSN
 	panelTimeline
 	panelMissionLog
+	panelOpsRow
+	panelInfoRow
 	panelTrajectory
 	panelCrew
 	panelHelp
@@ -45,6 +47,19 @@ func computeLayout(w, termHeight, fixedHeight int, measured map[panelID]int) (ma
 		panelSpaceWeather,
 		panelMissionLog,
 		panelCrew,
+	}
+	if useWideTopQuad(w) {
+		prioritized = []panelID{
+			panelTimeline,
+			panelCrew,
+		}
+	}
+	if useWideDashboardPairs(w) {
+		prioritized = []panelID{
+			panelOpsRow,
+			panelTimeline,
+			panelInfoRow,
+		}
 	}
 
 	used := 0
@@ -101,6 +116,14 @@ func innerWidthFor(style lipgloss.Style, totalWidth int) int {
 func splitWidthEvenly(totalWidth int) (int, int) {
 	left := totalWidth / 2
 	return left, totalWidth - left
+}
+
+func useWideDashboardPairs(width int) bool {
+	return width >= 140 && !useWideTopQuad(width)
+}
+
+func useWideTopQuad(width int) bool {
+	return width >= 180
 }
 
 func fitBlockHeight(s string, height int) string {

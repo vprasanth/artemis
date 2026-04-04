@@ -10,11 +10,11 @@ type Phase struct {
 }
 
 var Phases = []Phase{
-	{"Earth Orbit Operations", "Earth Orbit", d(0, 0, 0), d(1, 1, 8)},
-	{"Trans-Lunar Coast", "TL Coast", d(1, 1, 8), d(4, 6, 8)},
-	{"Lunar Flyby", "Lunar Flyby", d(4, 6, 8), d(5, 18, 52)},
-	{"Trans-Earth Coast", "TE Coast", d(5, 18, 52), d(9, 1, 9)},
-	{"Entry & Splashdown", "Entry", d(9, 1, 9), d(9, 1, 42)},
+	{"Earth Orbit Operations", "Earth Orbit", d(0, 0, 0), d(1, 1, 37)},
+	{"Trans-Lunar Coast", "TL Coast", d(1, 1, 37), d(4, 6, 59)},
+	{"Lunar Flyby", "Lunar Flyby", d(4, 6, 59), d(5, 19, 47)},
+	{"Trans-Earth Coast", "TE Coast", d(5, 19, 47), d(9, 1, 13)},
+	{"Entry & Splashdown", "Entry", d(9, 1, 13), d(9, 1, 46)},
 }
 
 type PhaseStatus int

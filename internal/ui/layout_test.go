@@ -125,6 +125,67 @@ func TestRenderClockPanelUsesDerivedMissionDayTotal(t *testing.T) {
 	}
 }
 
+func TestRenderTopRowUsesFourPanelsWhenWide(t *testing.T) {
+	m := Model{
+		dsnStatus: &dsn.Status{
+			Dishes: []dsn.Dish{{Name: "DSS34", Station: "Canberra, AU"}},
+		},
+		swStatus: &spaceweather.Status{
+			Kp:                1,
+			Bz:                -1.2,
+			WindSpeed:         500,
+			ProtonFlux10MeV:   0.4,
+			CurrentFlareClass: "C1.0",
+		},
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    time.Now().Add(-8 * time.Second),
+		},
+	}
+
+	got := renderTopRow(m, 200)
+	for _, want := range []string{"MISSION CLOCK", "SPACE WEATHER", "DEEP SPACE NETWORK", "SPACECRAFT STATE"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected wide top row to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderWideMainRowIncludesVisualizationAndMissionLog(t *testing.T) {
+	m := Model{
+		trajectoryView: 2,
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    time.Now().Add(-8 * time.Second),
+		},
+		blogStatus: &nasablog.Status{
+			Entries: []nasablog.Entry{{
+				ID:    7,
+				Title: "Crew Prepares Cabin for Lunar Flyby",
+				Time:  time.Now(),
+			}},
+		},
+		blogPostCache: make(map[int]*nasablog.Post),
+	}
+
+	got := renderWideMainRow(m, 180, 24)
+	for _, want := range []string{"INSTRUMENTS", "MISSION LOG"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected wide main row to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestRenderSpacecraftPanelShowsDerivedTelemetry(t *testing.T) {
 	now := time.Now()
 	m := Model{
@@ -145,6 +206,33 @@ func TestRenderSpacecraftPanelShowsDerivedTelemetry(t *testing.T) {
 
 	got := renderSpacecraftPanel(m, 60, 0)
 	for _, want := range []string{"Earth Rate:", "Ecl Lon/Lat:", "Data Age:", "HZ 8s", "DSN 3s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected spacecraft panel to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderSpacecraftPanelShowsDistanceDiagramWhenWide(t *testing.T) {
+	now := time.Now()
+	m := Model{
+		hzState: &horizons.State{
+			Position:     horizons.Vector3{X: 1000, Y: 1000, Z: 1000},
+			Velocity:     horizons.Vector3{X: 0.4, Y: 0.3, Z: 0.2},
+			MoonPosition: horizons.Vector3{X: 384400, Y: 0, Z: 0},
+			EarthDist:    1732,
+			MoonDist:     382668,
+			Speed:        0.539,
+			Timestamp:    now.Add(-8 * time.Second),
+		},
+		dsnStatus: &dsn.Status{
+			Range:     1732,
+			RTLT:      0.25,
+			Timestamp: now.Add(-3 * time.Second),
+		},
+	}
+
+	got := renderSpacecraftPanel(m, 110, 0)
+	for _, want := range []string{"Distance Track", "E", "O", "M"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected spacecraft panel to include %q, got:\n%s", want, got)
 		}
@@ -587,6 +675,24 @@ func TestRenderCachedTrajectoryPanelFillsFullscreenHeightForOpsViews(t *testing.
 		m.trajectoryView = view
 		if got := measureHeight(m.renderCachedTrajectoryPanel(24)); got != 24 {
 			t.Fatalf("cached fullscreen view %d height = %d, want 24", view, got)
+		}
+	}
+}
+
+func TestRenderGanttPanelIncludesFocusedActivityStrip(t *testing.T) {
+	got := renderGanttPanelAt(100, mission.Timeline[14].METOffset+45*time.Minute)
+
+	for _, want := range []string{
+		"MISSION TIMELINE",
+		"FOCUSED ACTIVITY",
+		"NOW",
+		"CREW",
+		"│",
+		"Current:",
+		"Next:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected gantt panel to include %q, got:\n%s", want, got)
 		}
 	}
 }

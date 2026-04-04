@@ -194,6 +194,7 @@ type Model struct {
 	height int
 
 	showGantt               bool // toggle between Gantt chart and event timeline
+	timelineZoom            int  // focused timeline zoom level
 	visualEffects           visualEffectsMode
 	screenProtectMode       screenProtectMode
 	notificationsEnabled    bool // toggle native desktop notifications
@@ -280,6 +281,8 @@ type Model struct {
 	cachedSW         string
 	cachedBlog       string
 	cachedTimeline   string
+	cachedOpsRow     string
+	cachedInfoRow    string
 }
 
 func NewModel() Model {
@@ -287,10 +290,12 @@ func NewModel() Model {
 	persistedDSN, _ := loadDefaultDSNHistory(now.UTC())
 	return Model{
 		showGantt:               true,
+		timelineZoom:            0,
 		visualEffects:           effectsStarsPulse,
 		screenProtectMode:       parseScreenProtectMode(os.Getenv("ARTEMIS_SCREEN_PROTECT")),
 		notificationsEnabled:    true,
 		debugKeysEnabled:        os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
+		trajectoryView:          2,
 		units:                   unitMetric,
 		lastActivityAt:          now,
 		screenProtectNow:        now,
@@ -353,6 +358,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			m.showGantt = !m.showGantt
 			m.buildCache()
+		case "+", "=":
+			if m.timelineZoom < maxTimelineZoomLevel() {
+				m.timelineZoom++
+				m.buildCache()
+			}
+		case "-", "_":
+			if m.timelineZoom > 0 {
+				m.timelineZoom--
+				m.buildCache()
+			}
 		case "c":
 			NextTheme()
 			m.buildCache()
@@ -894,6 +909,14 @@ func (m *Model) buildCache() {
 	m.cachedBlog = renderMissionLogPanel(*m, w, 5, m.selectedLogEntry)
 	m.cachedCrew = renderCrewPanel(w)
 
+	if useWideDashboardPairs(w) {
+		m.cachedOpsRow = renderWideOpsRow(*m, w)
+		m.cachedInfoRow = renderWideInfoRow(*m, w)
+	} else {
+		m.cachedOpsRow = ""
+		m.cachedInfoRow = ""
+	}
+
 	m.cachedTimeline = m.renderCachedTimelinePanel(w)
 
 	// Phase 2: Measure fixed-height panels.
@@ -903,6 +926,8 @@ func (m *Model) buildCache() {
 		panelSpaceWeather: measureHeight(m.cachedSW),
 		panelMissionLog:   measureHeight(m.cachedBlog),
 		panelCrew:         measureHeight(m.cachedCrew),
+		panelOpsRow:       measureHeight(m.cachedOpsRow),
+		panelInfoRow:      measureHeight(m.cachedInfoRow),
 	}
 
 	header := renderHeader(w)
@@ -920,7 +945,11 @@ func (m *Model) buildCache() {
 		// Phase 4: Render trajectory at the allocated height (flex panel).
 		m.cachedTrajectory = ""
 		if m.layout[panelTrajectory].visible {
-			m.cachedTrajectory = m.renderCachedTrajectoryPanel(trajectoryAvail)
+			if useWideTopQuad(w) {
+				m.cachedTrajectory = renderWideMainRow(*m, w, trajectoryAvail)
+			} else {
+				m.cachedTrajectory = m.renderCachedTrajectoryPanel(trajectoryAvail)
+			}
 			if actualHeight := measureHeight(m.cachedTrajectory); actualHeight > 0 {
 				m.layout[panelTrajectory] = panelLayout{visible: true, height: actualHeight, width: w}
 			}
@@ -932,21 +961,58 @@ func (m *Model) buildCache() {
 	m.layout[panelTopRow] = panelLayout{visible: !m.visualizationFullscreen, height: measureHeight(topRow), width: w}
 	m.layout[panelHelp] = panelLayout{visible: true, height: 1, width: w}
 
+	if useWideTopQuad(w) {
+		colW := w / 4
+		m.layout[panelSpaceWeather] = panelLayout{visible: true, height: measureHeight(renderSpaceWeatherPanel(*m, colW)), width: colW}
+		m.layout[panelDSN] = panelLayout{visible: true, height: measureHeight(renderDSNPanel(*m, colW)), width: colW}
+		m.layout[panelOpsRow] = panelLayout{visible: false, height: 0, width: w}
+		if m.layout[panelTrajectory].visible {
+			rightW := w / 3
+			m.layout[panelMissionLog] = panelLayout{visible: true, height: measureHeight(renderMissionLogPanel(*m, rightW, 5, m.selectedLogEntry)), width: rightW}
+		} else {
+			m.layout[panelMissionLog] = panelLayout{visible: false, height: 0, width: w / 3}
+		}
+	}
+
+	if useWideDashboardPairs(w) {
+		leftW, rightW := splitWidthEvenly(w)
+		if m.layout[panelOpsRow].visible {
+			m.layout[panelSpaceWeather] = panelLayout{visible: true, height: measureHeight(renderSpaceWeatherPanel(*m, leftW)), width: leftW}
+			m.layout[panelDSN] = panelLayout{visible: true, height: measureHeight(renderDSNPanel(*m, rightW)), width: rightW}
+		} else {
+			m.layout[panelSpaceWeather] = panelLayout{visible: false, height: 0, width: leftW}
+			m.layout[panelDSN] = panelLayout{visible: false, height: 0, width: rightW}
+		}
+		if m.layout[panelInfoRow].visible {
+			m.layout[panelMissionLog] = panelLayout{visible: true, height: measureHeight(renderMissionLogPanel(*m, leftW, 5, m.selectedLogEntry)), width: leftW}
+			m.layout[panelCrew] = panelLayout{visible: true, height: measureHeight(renderCrewPanel(rightW)), width: rightW}
+		} else {
+			m.layout[panelMissionLog] = panelLayout{visible: false, height: 0, width: leftW}
+			m.layout[panelCrew] = panelLayout{visible: false, height: 0, width: rightW}
+		}
+	}
+
 	// Clear hidden panels.
-	if !m.layout[panelDSN].visible {
+	if !m.layout[panelDSN].visible && !m.layout[panelOpsRow].visible {
 		m.cachedDSN = ""
 	}
-	if !m.layout[panelSpaceWeather].visible {
+	if !m.layout[panelSpaceWeather].visible && !m.layout[panelOpsRow].visible {
 		m.cachedSW = ""
 	}
 	if !m.layout[panelTimeline].visible {
 		m.cachedTimeline = ""
 	}
-	if !m.layout[panelMissionLog].visible {
+	if !m.layout[panelMissionLog].visible && !m.layout[panelInfoRow].visible {
 		m.cachedBlog = ""
 	}
-	if !m.layout[panelCrew].visible {
+	if !m.layout[panelCrew].visible && !m.layout[panelInfoRow].visible {
 		m.cachedCrew = ""
+	}
+	if !m.layout[panelOpsRow].visible {
+		m.cachedOpsRow = ""
+	}
+	if !m.layout[panelInfoRow].visible {
+		m.cachedInfoRow = ""
 	}
 }
 
@@ -956,6 +1022,8 @@ func (m *Model) buildFullscreenLayout(w int, header string) {
 		panelTimeline:     {visible: false, height: 0, width: w},
 		panelSpaceWeather: {visible: false, height: 0, width: w},
 		panelMissionLog:   {visible: false, height: 0, width: w},
+		panelOpsRow:       {visible: false, height: 0, width: w},
+		panelInfoRow:      {visible: false, height: 0, width: w},
 		panelCrew:         {visible: false, height: 0, width: w},
 		panelTopRow:       {visible: false, height: 0, width: w},
 	}
@@ -979,6 +1047,10 @@ func (m *Model) buildFullscreenLayout(w int, header string) {
 }
 
 func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
+	return m.renderCachedTrajectoryPanelWidth(m.width, availableHeight)
+}
+
+func (m Model) renderCachedTrajectoryPanelWidth(width, availableHeight int) string {
 	if availableHeight < 9 {
 		return ""
 	}
@@ -989,7 +1061,7 @@ func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
 	}
 
 	for plotH >= 6 {
-		panel := renderVisualizationPanel(m, m.width, plotH, m.visualizationFullscreen)
+		panel := renderVisualizationPanel(m, width, plotH, m.visualizationFullscreen)
 		actualHeight := measureHeight(panel)
 		if actualHeight <= availableHeight {
 			return panel
@@ -1003,7 +1075,7 @@ func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
 
 func (m Model) renderCachedTimelinePanel(w int) string {
 	if m.showGantt {
-		return renderGanttPanelAt(w, mission.MET())
+		return renderGanttPanelZoomAt(w, mission.MET(), m.timelineZoom)
 	}
 	return renderTimelinePanelAt(w, mission.MET())
 }
