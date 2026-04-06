@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const blogURL = "https://www.nasa.gov/wp-json/wp/v2/nasa-blog?categories=2918&per_page=5&orderby=date&order=desc&_fields=id,date_gmt,title,excerpt,link"
+const blogURL = "https://www.nasa.gov/wp-json/wp/v2/nasa-blog?categories=2918&per_page=100&orderby=date&order=desc&_fields=id,date_gmt,title,excerpt,link"
 const blogPostURL = "https://www.nasa.gov/wp-json/wp/v2/nasa-blog/%d?_fields=id,date_gmt,title,content,link"
 
 type Entry struct {
@@ -75,37 +75,45 @@ var listItemRegex = regexp.MustCompile(`(?i)<\s*li[^>]*>`)
 var paragraphCollapseRegex = regexp.MustCompile(`\n{3,}`)
 
 func (c *Client) Fetch() (*Status, error) {
-	resp, err := c.httpClient.Get(blogURL)
-	if err != nil {
-		return nil, fmt.Errorf("nasablog fetch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("nasablog read: %w", err)
-	}
-
-	var raw []rawEntry
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("nasablog parse: %w", err)
-	}
-
 	status := &Status{Timestamp: time.Now().UTC()}
-	for _, r := range raw {
-		t, _ := time.Parse("2006-01-02T15:04:05", r.DateGMT)
 
-		title := stripHTMLCompact(r.Title.Rendered)
-		excerpt := stripHTMLCompact(r.Excerpt.Rendered)
-		excerpt = strings.TrimSpace(excerpt)
+	for page := 1; ; page++ {
+		url := fmt.Sprintf("%s&page=%d", blogURL, page)
+		resp, err := c.httpClient.Get(url)
+		if err != nil {
+			return nil, fmt.Errorf("nasablog fetch: %w", err)
+		}
 
-		status.Entries = append(status.Entries, Entry{
-			ID:      r.ID,
-			Time:    t,
-			Title:   title,
-			Excerpt: excerpt,
-			Link:    r.Link,
-		})
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("nasablog read: %w", err)
+		}
+
+		var raw []rawEntry
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return nil, fmt.Errorf("nasablog parse: %w", err)
+		}
+
+		for _, r := range raw {
+			t, _ := time.Parse("2006-01-02T15:04:05", r.DateGMT)
+
+			title := stripHTMLCompact(r.Title.Rendered)
+			excerpt := stripHTMLCompact(r.Excerpt.Rendered)
+			excerpt = strings.TrimSpace(excerpt)
+
+			status.Entries = append(status.Entries, Entry{
+				ID:      r.ID,
+				Time:    t,
+				Title:   title,
+				Excerpt: excerpt,
+				Link:    r.Link,
+			})
+		}
+
+		if len(raw) < 100 {
+			break
+		}
 	}
 
 	return status, nil

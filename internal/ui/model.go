@@ -15,6 +15,7 @@ import (
 	"artemis/internal/mission"
 	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
+	"artemis/internal/youtubecaps"
 )
 
 const (
@@ -71,6 +72,11 @@ type blogPostMsg struct {
 	id   int
 	post *nasablog.Post
 	err  error
+}
+
+type ytcapsMsg struct {
+	status *youtubecaps.Status
+	err    error
 }
 
 type openBrowserMsg struct{ err error }
@@ -194,6 +200,7 @@ type Model struct {
 	height int
 
 	showGantt               bool // toggle between Gantt chart and event timeline
+	timelineZoom            int  // focused timeline zoom level
 	visualEffects           visualEffectsMode
 	screenProtectMode       screenProtectMode
 	notificationsEnabled    bool // toggle native desktop notifications
@@ -222,6 +229,7 @@ type Model struct {
 	horizonsClient *horizons.Client
 	swClient       *spaceweather.Client
 	blogClient     *nasablog.Client
+	ytcapsClient   *youtubecaps.Client
 
 	dsnStatus  *dsn.Status
 	dsnErr     error
@@ -237,17 +245,27 @@ type Model struct {
 	swErr     error
 	swLoading bool
 
-	blogStatus       *nasablog.Status
-	blogErr          error
-	blogLoading      bool
-	selectedLogEntry int
-	blogPrimed       bool
-	lastSeenBlogID   int
-	blogPostCache    map[int]*nasablog.Post
-	blogPostErr      error
-	blogPostLoading  bool
-	blogReaderOpen   bool
-	blogReaderScroll int
+	blogStatus             *nasablog.Status
+	blogErr                error
+	blogLoading            bool
+	selectedLogEntry       int
+	blogPrimed             bool
+	lastSeenBlogID         int
+	blogPostCache          map[int]*nasablog.Post
+	blogPostErr            error
+	blogPostLoading        bool
+	blogReaderOpen         bool
+	blogReaderScroll       int
+	transcriptReaderOpen   bool
+	transcriptReaderScroll int
+	glossaryOpen           bool
+	glossaryScroll         int
+
+	ytcapsStatus      *youtubecaps.Status
+	ytcapsErr         error
+	ytcapsLoading     bool
+	transcriptArchive []string
+	transcriptPath    string
 
 	kpHistory          []float64
 	bzHistory          []float64
@@ -262,10 +280,13 @@ type Model struct {
 	lastHorizonPathFetch time.Time
 	lastSWFetch          time.Time
 	lastBlogFetch        time.Time
+	lastYTCapsFetch      time.Time
 	startedAt            time.Time
 
 	phasePrimed         bool
 	lastPhaseIndex      int
+	timelinePrimed      bool
+	lastTimelineEventIx int
 	notifier            notificationSender
 	notificationError   string
 	notificationErrorAt time.Time
@@ -280,17 +301,22 @@ type Model struct {
 	cachedSW         string
 	cachedBlog       string
 	cachedTimeline   string
+	cachedOpsRow     string
+	cachedInfoRow    string
 }
 
 func NewModel() Model {
 	now := time.Now()
 	persistedDSN, _ := loadDefaultDSNHistory(now.UTC())
+	transcriptArchive, transcriptPath, _ := loadDefaultTranscriptArchive()
 	return Model{
 		showGantt:               true,
+		timelineZoom:            defaultTimelineZoomLevel,
 		visualEffects:           effectsStarsPulse,
 		screenProtectMode:       parseScreenProtectMode(os.Getenv("ARTEMIS_SCREEN_PROTECT")),
 		notificationsEnabled:    true,
 		debugKeysEnabled:        os.Getenv("ARTEMIS_DEBUG_KEYS") == "1",
+		trajectoryView:          2,
 		units:                   unitMetric,
 		lastActivityAt:          now,
 		screenProtectNow:        now,
@@ -306,14 +332,18 @@ func NewModel() Model {
 		horizonsClient:          horizons.NewClient(),
 		swClient:                spaceweather.NewClient(),
 		blogClient:              nasablog.NewClient(),
+		ytcapsClient:            youtubecaps.NewClient(),
 		dsnLoading:              true,
 		hzLoading:               true,
 		swLoading:               true,
 		blogLoading:             true,
+		ytcapsLoading:           true,
 		hzPathLoading:           true,
 		startedAt:               now,
 		notifier:                nativeNotifyCmd,
 		blogPostCache:           make(map[int]*nasablog.Post),
+		transcriptArchive:       transcriptArchive,
+		transcriptPath:          transcriptPath,
 	}
 }
 
@@ -327,6 +357,7 @@ func (m Model) Init() tea.Cmd {
 		fetchSW(m.swClient),
 		fetchSpaceWeatherHistory(m.swClient),
 		fetchBlog(m.blogClient),
+		fetchYTCaps(m.ytcapsClient),
 	)
 }
 
@@ -344,6 +375,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.markUserActivity(now)
+		if msg.String() == "?" {
+			m.transcriptReaderOpen = false
+			m.transcriptReaderScroll = 0
+			m.glossaryOpen = !m.glossaryOpen
+			if !m.glossaryOpen {
+				m.glossaryScroll = 0
+			}
+			return m, nil
+		}
+		if msg.String() == "x" {
+			m.blogReaderOpen = false
+			m.blogReaderScroll = 0
+			m.glossaryOpen = false
+			m.glossaryScroll = 0
+			m.transcriptReaderOpen = !m.transcriptReaderOpen
+			if !m.transcriptReaderOpen {
+				m.transcriptReaderScroll = 0
+			}
+			return m, nil
+		}
+		if m.glossaryOpen {
+			return m.updateGlossary(msg)
+		}
+		if m.transcriptReaderOpen {
+			return m.updateTranscriptReader(msg)
+		}
 		if m.blogReaderOpen {
 			return m.updateBlogReader(msg)
 		}
@@ -353,6 +410,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			m.showGantt = !m.showGantt
 			m.buildCache()
+		case "+", "=":
+			if m.timelineZoom < maxTimelineZoomLevel() {
+				m.timelineZoom++
+				m.buildCache()
+			}
+		case "-", "_":
+			if m.timelineZoom > 0 {
+				m.timelineZoom--
+				m.buildCache()
+			}
 		case "c":
 			NextTheme()
 			m.buildCache()
@@ -372,6 +439,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.debugKeysEnabled {
 				return m, m.debugPhaseNotificationCmd()
 			}
+		case "T":
+			return m, m.testNotificationCmd()
 		case "v":
 			m.trajectoryView = (m.trajectoryView + 1) % 5
 			m.buildCache()
@@ -400,27 +469,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.blogLoading = true
 				cmds = append(cmds, fetchBlog(m.blogClient))
 			}
+			if !m.ytcapsLoading {
+				m.ytcapsLoading = true
+				cmds = append(cmds, fetchYTCaps(m.ytcapsClient))
+			}
 			return m, tea.Batch(cmds...)
 		case "tab", "j":
 			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
-				max := len(m.blogStatus.Entries) - 1
-				if max > 4 {
-					max = 4
-				}
+				max := m.visibleMissionLogEntries() - 1
 				m.selectedLogEntry = (m.selectedLogEntry + 1) % (max + 1)
 				m.buildCache()
 			}
 		case "shift+tab", "k":
 			if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
-				max := len(m.blogStatus.Entries) - 1
-				if max > 4 {
-					max = 4
-				}
+				max := m.visibleMissionLogEntries() - 1
 				m.selectedLogEntry = (m.selectedLogEntry - 1 + max + 1) % (max + 1)
 				m.buildCache()
 			}
 		case "enter":
 			if entry, ok := m.selectedBlogEntry(); ok {
+				m.transcriptReaderOpen = false
+				m.transcriptReaderScroll = 0
 				m.blogReaderOpen = true
 				m.blogReaderScroll = 0
 				m.blogPostErr = nil
@@ -454,6 +523,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notificationError = ""
 		}
 		if notifyCmd := m.handlePhaseNotification(time.Time(msg)); notifyCmd != nil {
+			cmds = append(cmds, notifyCmd)
+		}
+		if notifyCmd := m.handleTimelineNotification(time.Time(msg)); notifyCmd != nil {
 			cmds = append(cmds, notifyCmd)
 		}
 
@@ -503,6 +575,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if now.Sub(m.lastBlogFetch) > 60*time.Minute && !m.blogLoading {
 			m.blogLoading = true
 			cmds = append(cmds, fetchBlog(m.blogClient))
+		}
+		if now.Sub(m.lastYTCapsFetch) > 15*time.Second && !m.ytcapsLoading {
+			m.ytcapsLoading = true
+			cmds = append(cmds, fetchYTCaps(m.ytcapsClient))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -633,10 +709,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Clamp selection to valid range.
 		if m.blogStatus != nil && len(m.blogStatus.Entries) > 0 {
-			max := len(m.blogStatus.Entries) - 1
-			if max > 4 {
-				max = 4
-			}
+			max := m.visibleMissionLogEntries() - 1
 			if m.selectedLogEntry > max {
 				m.selectedLogEntry = max
 			}
@@ -658,6 +731,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.blogPostErr = nil
 		}
 
+	case ytcapsMsg:
+		m.ytcapsLoading = false
+		m.lastYTCapsFetch = time.Now()
+		if msg.err != nil {
+			m.ytcapsErr = msg.err
+		} else {
+			m.appendTranscriptStatus(msg.status)
+			m.ytcapsStatus = msg.status
+			m.ytcapsErr = nil
+		}
+		m.buildCache()
+
 	case openBrowserMsg:
 		// Silently consume browser result.
 
@@ -677,6 +762,69 @@ func (m *Model) markUserActivity(now time.Time) {
 	}
 	m.lastActivityAt = now
 	m.screenProtectNow = now
+}
+
+func (m Model) updateGlossary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "esc", "?":
+		m.glossaryOpen = false
+		m.glossaryScroll = 0
+		return m, nil
+	case "j", "down":
+		m.glossaryScroll++
+	case "k", "up":
+		if m.glossaryScroll > 0 {
+			m.glossaryScroll--
+		}
+	case "pgdown", "space":
+		m.glossaryScroll += m.glossaryPageStep()
+	case "pgup":
+		m.glossaryScroll -= m.glossaryPageStep()
+		if m.glossaryScroll < 0 {
+			m.glossaryScroll = 0
+		}
+	case "g":
+		m.glossaryScroll = 0
+	case "G":
+		m.glossaryScroll = 1 << 20
+	}
+	return m, nil
+}
+
+func (m Model) updateTranscriptReader(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "esc", "x":
+		m.transcriptReaderOpen = false
+		m.transcriptReaderScroll = 0
+		return m, nil
+	case "j", "down":
+		m.transcriptReaderScroll++
+	case "k", "up":
+		if m.transcriptReaderScroll > 0 {
+			m.transcriptReaderScroll--
+		}
+	case "pgdown", "space":
+		m.transcriptReaderScroll += m.transcriptReaderPageStep()
+	case "pgup":
+		m.transcriptReaderScroll -= m.transcriptReaderPageStep()
+		if m.transcriptReaderScroll < 0 {
+			m.transcriptReaderScroll = 0
+		}
+	case "g":
+		m.transcriptReaderScroll = 0
+	case "G":
+		m.transcriptReaderScroll = 1 << 20
+	case "r":
+		if !m.ytcapsLoading {
+			m.ytcapsLoading = true
+			return m, fetchYTCaps(m.ytcapsClient)
+		}
+	}
+	return m, nil
 }
 
 func (m Model) currentScreenProtectTime() time.Time {
@@ -772,7 +920,42 @@ func (m Model) selectedBlogEntry() (nasablog.Entry, bool) {
 	return m.blogStatus.Entries[m.selectedLogEntry], true
 }
 
+func (m Model) visibleMissionLogEntries() int {
+	if m.blogStatus == nil || len(m.blogStatus.Entries) == 0 {
+		return 0
+	}
+
+	maxEntries := 12
+	switch {
+	case useWideDashboardPairs(m.width):
+		maxEntries = 8
+	case useWideTopQuad(m.width):
+		maxEntries = 12
+	}
+
+	if len(m.blogStatus.Entries) < maxEntries {
+		return len(m.blogStatus.Entries)
+	}
+	return maxEntries
+}
+
 func (m Model) blogReaderPageStep() int {
+	step := m.height / 2
+	if step < 4 {
+		step = 4
+	}
+	return step
+}
+
+func (m Model) glossaryPageStep() int {
+	step := m.height / 2
+	if step < 4 {
+		step = 4
+	}
+	return step
+}
+
+func (m Model) transcriptReaderPageStep() int {
 	step := m.height / 2
 	if step < 4 {
 		step = 4
@@ -863,6 +1046,34 @@ func (m *Model) handlePhaseNotification(now time.Time) tea.Cmd {
 	return m.notificationCmd("Mission Phase Change", mission.Phases[phaseIdx].Name)
 }
 
+func (m *Model) handleTimelineNotification(now time.Time) tea.Cmd {
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	met := now.Sub(mission.LaunchTime)
+	eventIdx := mission.CurrentEventIndex(met)
+	if eventIdx < 0 || eventIdx >= len(mission.Timeline) {
+		return nil
+	}
+	if !m.timelinePrimed {
+		m.timelinePrimed = true
+		m.lastTimelineEventIx = eventIdx
+		return nil
+	}
+	if eventIdx <= m.lastTimelineEventIx {
+		return nil
+	}
+
+	m.lastTimelineEventIx = eventIdx
+	if !m.notificationsEnabled {
+		return nil
+	}
+
+	event := mission.Timeline[eventIdx]
+	return m.notificationCmd("Mission Timeline Update", event.Label)
+}
+
 func (m Model) notificationCmd(title, body string) tea.Cmd {
 	if m.notifier != nil {
 		return m.notifier(title, body)
@@ -878,6 +1089,10 @@ func (m Model) debugPhaseNotificationCmd() tea.Cmd {
 	return m.notificationCmd("Mission Phase Change", mission.Phases[phaseIdx].Name)
 }
 
+func (m Model) testNotificationCmd() tea.Cmd {
+	return m.notificationCmd("Artemis II Test", "Desktop notifications are working.")
+}
+
 // buildCache pre-renders expensive panels so View() only assembles strings.
 // Fixed-height panels are rendered and measured first, then the layout engine
 // decides which fit. Trajectory is a flex panel that expands to fill remaining space.
@@ -891,8 +1106,16 @@ func (m *Model) buildCache() {
 	// Phase 1: Render fixed-height panels.
 	m.cachedDSN = renderDSNPanel(*m, w)
 	m.cachedSW = renderSpaceWeatherPanel(*m, w)
-	m.cachedBlog = renderMissionLogPanel(*m, w, 5, m.selectedLogEntry)
+	m.cachedBlog = renderMissionLogPanel(*m, w, 12, m.selectedLogEntry)
 	m.cachedCrew = renderCrewPanel(w)
+
+	if useWideDashboardPairs(w) {
+		m.cachedOpsRow = renderWideOpsRow(*m, w)
+		m.cachedInfoRow = renderWideInfoRow(*m, w)
+	} else {
+		m.cachedOpsRow = ""
+		m.cachedInfoRow = ""
+	}
 
 	m.cachedTimeline = m.renderCachedTimelinePanel(w)
 
@@ -903,6 +1126,8 @@ func (m *Model) buildCache() {
 		panelSpaceWeather: measureHeight(m.cachedSW),
 		panelMissionLog:   measureHeight(m.cachedBlog),
 		panelCrew:         measureHeight(m.cachedCrew),
+		panelOpsRow:       measureHeight(m.cachedOpsRow),
+		panelInfoRow:      measureHeight(m.cachedInfoRow),
 	}
 
 	header := renderHeader(w)
@@ -920,7 +1145,11 @@ func (m *Model) buildCache() {
 		// Phase 4: Render trajectory at the allocated height (flex panel).
 		m.cachedTrajectory = ""
 		if m.layout[panelTrajectory].visible {
-			m.cachedTrajectory = m.renderCachedTrajectoryPanel(trajectoryAvail)
+			if useWideTopQuad(w) {
+				m.cachedTrajectory = renderWideMainRow(*m, w, trajectoryAvail)
+			} else {
+				m.cachedTrajectory = m.renderCachedTrajectoryPanel(trajectoryAvail)
+			}
 			if actualHeight := measureHeight(m.cachedTrajectory); actualHeight > 0 {
 				m.layout[panelTrajectory] = panelLayout{visible: true, height: actualHeight, width: w}
 			}
@@ -932,21 +1161,58 @@ func (m *Model) buildCache() {
 	m.layout[panelTopRow] = panelLayout{visible: !m.visualizationFullscreen, height: measureHeight(topRow), width: w}
 	m.layout[panelHelp] = panelLayout{visible: true, height: 1, width: w}
 
+	if useWideTopQuad(w) {
+		colW := w / 4
+		m.layout[panelSpaceWeather] = panelLayout{visible: true, height: measureHeight(renderSpaceWeatherPanel(*m, colW)), width: colW}
+		m.layout[panelDSN] = panelLayout{visible: true, height: measureHeight(renderDSNPanel(*m, colW)), width: colW}
+		m.layout[panelOpsRow] = panelLayout{visible: false, height: 0, width: w}
+		if m.layout[panelTrajectory].visible {
+			rightW := w / 3
+			m.layout[panelMissionLog] = panelLayout{visible: true, height: measureHeight(renderMissionLogPanel(*m, rightW, 12, m.selectedLogEntry)), width: rightW}
+		} else {
+			m.layout[panelMissionLog] = panelLayout{visible: false, height: 0, width: w / 3}
+		}
+	}
+
+	if useWideDashboardPairs(w) {
+		leftW, rightW := splitWidthEvenly(w)
+		if m.layout[panelOpsRow].visible {
+			m.layout[panelSpaceWeather] = panelLayout{visible: true, height: measureHeight(renderSpaceWeatherPanel(*m, leftW)), width: leftW}
+			m.layout[panelDSN] = panelLayout{visible: true, height: measureHeight(renderDSNPanel(*m, rightW)), width: rightW}
+		} else {
+			m.layout[panelSpaceWeather] = panelLayout{visible: false, height: 0, width: leftW}
+			m.layout[panelDSN] = panelLayout{visible: false, height: 0, width: rightW}
+		}
+		if m.layout[panelInfoRow].visible {
+			m.layout[panelMissionLog] = panelLayout{visible: true, height: measureHeight(renderMissionLogPanel(*m, leftW, 8, m.selectedLogEntry)), width: leftW}
+			m.layout[panelCrew] = panelLayout{visible: true, height: measureHeight(renderCrewPanel(rightW)), width: rightW}
+		} else {
+			m.layout[panelMissionLog] = panelLayout{visible: false, height: 0, width: leftW}
+			m.layout[panelCrew] = panelLayout{visible: false, height: 0, width: rightW}
+		}
+	}
+
 	// Clear hidden panels.
-	if !m.layout[panelDSN].visible {
+	if !m.layout[panelDSN].visible && !m.layout[panelOpsRow].visible {
 		m.cachedDSN = ""
 	}
-	if !m.layout[panelSpaceWeather].visible {
+	if !m.layout[panelSpaceWeather].visible && !m.layout[panelOpsRow].visible {
 		m.cachedSW = ""
 	}
 	if !m.layout[panelTimeline].visible {
 		m.cachedTimeline = ""
 	}
-	if !m.layout[panelMissionLog].visible {
+	if !m.layout[panelMissionLog].visible && !m.layout[panelInfoRow].visible {
 		m.cachedBlog = ""
 	}
-	if !m.layout[panelCrew].visible {
+	if !m.layout[panelCrew].visible && !m.layout[panelInfoRow].visible {
 		m.cachedCrew = ""
+	}
+	if !m.layout[panelOpsRow].visible {
+		m.cachedOpsRow = ""
+	}
+	if !m.layout[panelInfoRow].visible {
+		m.cachedInfoRow = ""
 	}
 }
 
@@ -956,6 +1222,8 @@ func (m *Model) buildFullscreenLayout(w int, header string) {
 		panelTimeline:     {visible: false, height: 0, width: w},
 		panelSpaceWeather: {visible: false, height: 0, width: w},
 		panelMissionLog:   {visible: false, height: 0, width: w},
+		panelOpsRow:       {visible: false, height: 0, width: w},
+		panelInfoRow:      {visible: false, height: 0, width: w},
 		panelCrew:         {visible: false, height: 0, width: w},
 		panelTopRow:       {visible: false, height: 0, width: w},
 	}
@@ -979,6 +1247,10 @@ func (m *Model) buildFullscreenLayout(w int, header string) {
 }
 
 func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
+	return m.renderCachedTrajectoryPanelWidth(m.width, availableHeight)
+}
+
+func (m Model) renderCachedTrajectoryPanelWidth(width, availableHeight int) string {
 	if availableHeight < 9 {
 		return ""
 	}
@@ -989,7 +1261,7 @@ func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
 	}
 
 	for plotH >= 6 {
-		panel := renderVisualizationPanel(m, m.width, plotH, m.visualizationFullscreen)
+		panel := renderVisualizationPanel(m, width, plotH, m.visualizationFullscreen)
 		actualHeight := measureHeight(panel)
 		if actualHeight <= availableHeight {
 			return panel
@@ -1003,7 +1275,7 @@ func (m Model) renderCachedTrajectoryPanel(availableHeight int) string {
 
 func (m Model) renderCachedTimelinePanel(w int) string {
 	if m.showGantt {
-		return renderGanttPanelAt(w, mission.MET())
+		return renderGanttPanelZoomAt(w, mission.MET(), m.timelineZoom)
 	}
 	return renderTimelinePanelAt(w, mission.MET())
 }
@@ -1100,6 +1372,13 @@ func fetchBlog(client *nasablog.Client) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Fetch()
 		return blogMsg{status: status, err: err}
+	}
+}
+
+func fetchYTCaps(client *youtubecaps.Client) tea.Cmd {
+	return func() tea.Msg {
+		status, err := client.Fetch()
+		return ytcapsMsg{status: status, err: err}
 	}
 }
 

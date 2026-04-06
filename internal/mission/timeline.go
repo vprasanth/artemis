@@ -35,37 +35,44 @@ type Event struct {
 }
 
 var Timeline = []Event{
+	// Baseline mission milestones updated from NASA's Artemis II overview timeline
+	// PDF (January 8, 2026) and cross-checked against the March 26, 2026
+	// broadcast schedule where milestone naming overlapped.
 	{d(0, 0, 0), "Launch", "Liftoff from LC-39B, Kennedy Space Center"},
 	{d(0, 0, 20), "Solar Array Deploy", "Orion deploys solar arrays in Earth orbit"},
-	{d(0, 0, 50), "Perigee Raise", "Perigee raise maneuver (2223 x 185 km)"},
-	{d(0, 1, 48), "Apogee Raise", "Apogee raise maneuver (70377 km)"},
+	{d(0, 0, 50), "ICPS PRM", "ICPS perigee raise maneuver"},
+	{d(0, 1, 48), "ARB TIG", "Apogee raise burn ignition"},
 	{d(0, 3, 24), "ICPS Separation", "Orion/ICPS separation"},
-	{d(0, 4, 50), "Upper Stage Sep Burn", "Orion upper stage separation burn"},
-	{d(0, 5, 4), "CubeSat Deploy", "4 CubeSats deploy at one minute intervals"},
-	{d(0, 12, 55), "Perigee Raise Burn", "Perigee raise burn"},
-	{d(1, 1, 8), "TLI Burn", "Translunar Injection burn (~8 min)"},
+	{d(0, 5, 2), "ICPS Disposal Burn", "Orion upper stage disposal burn"},
+	{d(0, 5, 27), "CubeSat Deploy", "Secondary payload deploy sequence"},
+	{d(0, 13, 45), "Orion PRB", "Orion perigee raise burn"},
+	{d(1, 1, 37), "TLI Burn", "Translunar injection burn"},
 	{d(1, 1, 35), "Earth Shadow Entry", "Enter Earth shadow"},
 	{d(1, 2, 41), "Earth Shadow Exit", "Exit Earth shadow"},
-	{d(2, 0, 8), "Correction Burn #1", "Orbit trajectory correction burn #1"},
-	{d(3, 1, 8), "Correction Burn #2", "Orbit trajectory correction burn #2"},
-	{d(4, 4, 29), "Correction Burn #3", "Orbit trajectory correction burn #3"},
-	{d(4, 6, 8), "Lunar SOI Entry", "Orion enters lunar sphere of influence"},
-	{d(5, 0, 31), "Closest Moon Approach", "Closest approach to the Moon"},
-	{d(5, 0, 34), "Max Earth Distance", "Maximum distance from Earth"},
-	{d(5, 18, 52), "Lunar SOI Exit", "Orion exits lunar sphere of influence"},
-	{d(6, 1, 29), "Return Correction #1", "Return trajectory correction burn #1"},
+	{d(2, 0, 7), "OTC-1", "Outbound trajectory correction burn #1"},
+	{d(3, 0, 12), "OTC-2", "Outbound trajectory correction burn #2"},
+	{d(4, 5, 23), "OTC-3", "Outbound trajectory correction burn #3"},
+	{d(4, 6, 59), "Lunar SOI Entry", "Orion enters the Moon's sphere of influence"},
+	{ds(5, 1, 23, 20), "Closest Moon Approach", "Closest approach to the Moon"},
+	{ds(5, 1, 26, 57), "Max Earth Distance", "Maximum distance from Earth"},
+	{d(5, 19, 47), "Lunar SOI Exit", "Orion exits the Moon's sphere of influence"},
+	{d(6, 4, 23), "RTC-1", "Return trajectory correction burn #1"},
 	{d(7, 4, 20), "Manual Piloting Demo", "Manual piloting demonstration"},
-	{d(8, 4, 29), "Return Correction #2", "Return trajectory correction burn #2"},
-	{d(8, 20, 29), "Return Correction #3", "Return trajectory correction burn #3"},
-	{d(9, 1, 9), "Module Separation", "Orion crew and service module separation"},
-	{d(9, 1, 29), "Entry Interface", "Entry interface (122 km above Earth)"},
-	{d(9, 1, 42), "Splashdown", "Splashdown in Pacific Ocean near Baja California"},
+	{d(8, 4, 33), "RTC-2", "Return trajectory correction burn #2"},
+	{d(8, 20, 33), "RTC-3", "Return trajectory correction burn #3"},
+	{d(9, 1, 13), "Module Separation", "Crew and service module separation"},
+	{d(9, 1, 33), "Entry Interface", "Entry interface (122 km above Earth)"},
+	{d(9, 1, 46), "Splashdown", "Splashdown in the Pacific Ocean near Baja California"},
 }
 
 func d(days, hours, minutes int) time.Duration {
 	return time.Duration(days)*24*time.Hour +
 		time.Duration(hours)*time.Hour +
 		time.Duration(minutes)*time.Minute
+}
+
+func ds(days, hours, minutes, seconds int) time.Duration {
+	return d(days, hours, minutes) + time.Duration(seconds)*time.Second
 }
 
 func MET() time.Duration {

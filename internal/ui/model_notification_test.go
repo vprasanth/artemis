@@ -176,6 +176,77 @@ func TestHandlePhaseNotificationRespectsDisabledState(t *testing.T) {
 	}
 }
 
+func TestHandleTimelineNotificationPrimesWithoutNotifying(t *testing.T) {
+	var calls []notificationCall
+	now := mission.LaunchTime.Add(2 * time.Hour)
+	m := Model{
+		notificationsEnabled: true,
+		notifier:             testNotifier(&calls),
+	}
+
+	cmd := m.handleTimelineNotification(now)
+
+	if cmd != nil {
+		t.Fatalf("expected no command during initial timeline prime")
+	}
+	if !m.timelinePrimed || m.lastTimelineEventIx != mission.CurrentEventIndex(now.Sub(mission.LaunchTime)) {
+		t.Fatalf("expected timeline baseline to be primed, got primed=%v index=%d", m.timelinePrimed, m.lastTimelineEventIx)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no notifications during initial timeline prime, got %d", len(calls))
+	}
+}
+
+func TestHandleTimelineNotificationEmitsOnEventAdvance(t *testing.T) {
+	var calls []notificationCall
+	m := Model{
+		notificationsEnabled: true,
+		timelinePrimed:       true,
+		lastTimelineEventIx:  0,
+		notifier:             testNotifier(&calls),
+	}
+
+	if cmd := m.handleTimelineNotification(mission.LaunchTime.Add(10 * time.Minute)); cmd != nil {
+		t.Fatalf("expected no command while remaining on the same timeline event")
+	}
+
+	cmd := m.handleTimelineNotification(mission.LaunchTime.Add(mission.Timeline[1].METOffset + time.Minute))
+	if cmd == nil {
+		t.Fatalf("expected command when timeline advances")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 timeline notification call, got %d", len(calls))
+	}
+	if calls[0].title != "Mission Timeline Update" || calls[0].body != mission.Timeline[1].Label {
+		t.Fatalf("unexpected timeline notification payload: %+v", calls[0])
+	}
+	if m.lastTimelineEventIx != 1 {
+		t.Fatalf("expected lastTimelineEventIx to advance, got %d", m.lastTimelineEventIx)
+	}
+}
+
+func TestHandleTimelineNotificationRespectsDisabledState(t *testing.T) {
+	var calls []notificationCall
+	m := Model{
+		notificationsEnabled: false,
+		timelinePrimed:       true,
+		lastTimelineEventIx:  0,
+		notifier:             testNotifier(&calls),
+	}
+
+	cmd := m.handleTimelineNotification(mission.LaunchTime.Add(mission.Timeline[1].METOffset + time.Minute))
+
+	if cmd != nil {
+		t.Fatalf("expected no command when timeline notifications are disabled")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected disabled timeline notifications to suppress notifier calls")
+	}
+	if m.lastTimelineEventIx != 1 {
+		t.Fatalf("expected timeline baseline to advance while disabled, got %d", m.lastTimelineEventIx)
+	}
+}
+
 func TestDebugPhaseNotificationCmdTargetsNextPhase(t *testing.T) {
 	var calls []notificationCall
 	m := Model{
@@ -215,6 +286,85 @@ func TestUpdateIgnoresDebugKeyWhenDisabled(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("expected no notifications when debug keybindings are disabled")
+	}
+}
+
+func TestVisibleMissionLogEntriesTracksLayout(t *testing.T) {
+	entries := make([]nasablog.Entry, 20)
+	m := Model{
+		blogStatus: &nasablog.Status{Entries: entries},
+		width:      120,
+	}
+
+	if got := m.visibleMissionLogEntries(); got != 12 {
+		t.Fatalf("expected standard layout to show 12 entries, got %d", got)
+	}
+
+	m.width = 150
+	if got := m.visibleMissionLogEntries(); got != 8 {
+		t.Fatalf("expected paired layout to show 8 entries, got %d", got)
+	}
+
+	m.width = 190
+	if got := m.visibleMissionLogEntries(); got != 12 {
+		t.Fatalf("expected wide top-quad layout to show 12 entries, got %d", got)
+	}
+}
+
+func TestUpdateLogNavigationUsesVisibleEntryLimit(t *testing.T) {
+	entries := make([]nasablog.Entry, 20)
+	m := Model{
+		width:      150,
+		height:     40,
+		blogStatus: &nasablog.Status{Entries: entries},
+	}
+
+	for range 7 {
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		if cmd != nil {
+			t.Fatalf("expected navigation not to return a command")
+		}
+		m = next.(Model)
+	}
+	if m.selectedLogEntry != 7 {
+		t.Fatalf("expected selection to advance to entry 7, got %d", m.selectedLogEntry)
+	}
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if cmd != nil {
+		t.Fatalf("expected wrap navigation not to return a command")
+	}
+	m = next.(Model)
+	if m.selectedLogEntry != 0 {
+		t.Fatalf("expected selection to wrap after visible entry 7, got %d", m.selectedLogEntry)
+	}
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if cmd != nil {
+		t.Fatalf("expected reverse navigation not to return a command")
+	}
+	m = next.(Model)
+	if m.selectedLogEntry != 7 {
+		t.Fatalf("expected reverse navigation to wrap to entry 7, got %d", m.selectedLogEntry)
+	}
+}
+
+func TestTestNotificationHotkeyAlwaysWorks(t *testing.T) {
+	var calls []notificationCall
+	model, cmd := Model{
+		notificationsEnabled: false,
+		notifier:             testNotifier(&calls),
+	}.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+
+	if cmd == nil {
+		t.Fatalf("expected test notification command")
+	}
+	_ = model.(Model)
+	if len(calls) != 1 {
+		t.Fatalf("expected one test notification, got %d", len(calls))
+	}
+	if calls[0].title != "Artemis II Test" || calls[0].body != "Desktop notifications are working." {
+		t.Fatalf("unexpected test notification payload: %+v", calls[0])
 	}
 }
 
@@ -409,6 +559,56 @@ func TestBlogReaderEscapeClosesReader(t *testing.T) {
 	}
 	if model.(Model).blogReaderOpen {
 		t.Fatalf("expected esc to close blog reader")
+	}
+}
+
+func TestQuestionMarkTogglesGlossary(t *testing.T) {
+	model, cmd := Model{}.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if cmd != nil {
+		t.Fatalf("expected glossary toggle without command")
+	}
+	got := model.(Model)
+	if !got.glossaryOpen {
+		t.Fatalf("expected glossary to open on ?")
+	}
+
+	model, cmd = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if cmd != nil {
+		t.Fatalf("expected glossary close without command")
+	}
+	got = model.(Model)
+	if got.glossaryOpen {
+		t.Fatalf("expected glossary to close on second ?")
+	}
+}
+
+func TestGlossaryEscapeClosesGlossary(t *testing.T) {
+	model, cmd := Model{glossaryOpen: true}.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected esc to close glossary without command")
+	}
+	if model.(Model).glossaryOpen {
+		t.Fatalf("expected esc to close glossary")
+	}
+}
+
+func TestXOpensTranscriptReader(t *testing.T) {
+	model, cmd := Model{}.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("expected transcript toggle without command")
+	}
+	if !model.(Model).transcriptReaderOpen {
+		t.Fatalf("expected x to open transcript reader")
+	}
+}
+
+func TestTranscriptReaderEscapeClosesReader(t *testing.T) {
+	model, cmd := Model{transcriptReaderOpen: true}.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected esc to close transcript reader without command")
+	}
+	if model.(Model).transcriptReaderOpen {
+		t.Fatalf("expected esc to close transcript reader")
 	}
 }
 
@@ -654,7 +854,7 @@ func TestTickRefreshesCachedTimeline(t *testing.T) {
 
 	m := Model{
 		width:     120,
-		height:    40,
+		height:    52,
 		showGantt: true,
 	}
 	m.buildCache()

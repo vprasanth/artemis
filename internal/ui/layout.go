@@ -15,6 +15,8 @@ const (
 	panelDSN
 	panelTimeline
 	panelMissionLog
+	panelOpsRow
+	panelInfoRow
 	panelTrajectory
 	panelCrew
 	panelHelp
@@ -45,6 +47,19 @@ func computeLayout(w, termHeight, fixedHeight int, measured map[panelID]int) (ma
 		panelSpaceWeather,
 		panelMissionLog,
 		panelCrew,
+	}
+	if useWideTopQuad(w) {
+		prioritized = []panelID{
+			panelTimeline,
+			panelCrew,
+		}
+	}
+	if useWideDashboardPairs(w) {
+		prioritized = []panelID{
+			panelOpsRow,
+			panelTimeline,
+			panelInfoRow,
+		}
 	}
 
 	used := 0
@@ -101,6 +116,53 @@ func innerWidthFor(style lipgloss.Style, totalWidth int) int {
 func splitWidthEvenly(totalWidth int) (int, int) {
 	left := totalWidth / 2
 	return left, totalWidth - left
+}
+
+func weightedSplitWidths(totalWidth int, weights []int) []int {
+	if len(weights) == 0 {
+		return nil
+	}
+
+	totalWeight := 0
+	for _, weight := range weights {
+		if weight > 0 {
+			totalWeight += weight
+		}
+	}
+	if totalWeight <= 0 {
+		widths := make([]int, len(weights))
+		base := totalWidth / len(weights)
+		used := 0
+		for i := range widths {
+			widths[i] = base
+			used += base
+		}
+		widths[len(widths)-1] += totalWidth - used
+		return widths
+	}
+
+	widths := make([]int, len(weights))
+	used := 0
+	for i, weight := range weights {
+		if i == len(weights)-1 {
+			widths[i] = totalWidth - used
+			break
+		}
+		if weight < 0 {
+			weight = 0
+		}
+		widths[i] = (totalWidth * weight) / totalWeight
+		used += widths[i]
+	}
+	return widths
+}
+
+func useWideDashboardPairs(width int) bool {
+	return width >= 140 && !useWideTopQuad(width)
+}
+
+func useWideTopQuad(width int) bool {
+	return width >= 180
 }
 
 func fitBlockHeight(s string, height int) string {

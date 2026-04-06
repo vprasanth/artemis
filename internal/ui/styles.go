@@ -122,6 +122,10 @@ var (
 	ganttCursorBar    lipgloss.Style
 	ganttPendingBar   lipgloss.Style
 	ganttNowMarker    lipgloss.Style
+	ganttPastBlock    lipgloss.Style
+	ganttCurrentBlock lipgloss.Style
+	ganttFutureBlock  lipgloss.Style
+	ganttBlockDivider lipgloss.Style
 
 	logTimeStyle  lipgloss.Style
 	logTitleStyle lipgloss.Style
@@ -270,6 +274,23 @@ func applyTheme(id ThemeID) {
 	ganttNowMarker = lipgloss.NewStyle().
 		Foreground(colorYellow).
 		Bold(true)
+
+	ganttPastBlock = lipgloss.NewStyle().
+		Foreground(colorBright).
+		Background(colorDim)
+
+	ganttCurrentBlock = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#101820")).
+		Background(colorYellow)
+
+	ganttFutureBlock = lipgloss.NewStyle().
+		Foreground(colorBright).
+		Background(colorPrimary)
+
+	ganttBlockDivider = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#101820"))
 
 	logTimeStyle = lipgloss.NewStyle().
 		Foreground(colorCyan)
