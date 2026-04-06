@@ -2,6 +2,8 @@ artemis
 artemis-*
 *.exe
 .DS_Store
+.tmp-go/
+live-captions.log
 
 # Secrets and credentials
 .env
