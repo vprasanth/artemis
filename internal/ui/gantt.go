@@ -8,6 +8,7 @@ import (
 
 	"artemis/internal/mission"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const ganttLabelWidth = 15
@@ -21,11 +22,15 @@ var timelineZoomSpans = []struct {
 	past   time.Duration
 	future time.Duration
 }{
+	{36 * time.Hour, 54 * time.Hour},
+	{24 * time.Hour, 36 * time.Hour},
 	{12 * time.Hour, 18 * time.Hour},
 	{8 * time.Hour, 12 * time.Hour},
 	{4 * time.Hour, 6 * time.Hour},
 	{2 * time.Hour, 3 * time.Hour},
 }
+
+const defaultTimelineZoomLevel = 2
 
 type activityPaletteColor struct {
 	bg string
@@ -48,7 +53,7 @@ func renderGanttPanel(w int) string {
 }
 
 func renderGanttPanelAt(w int, met time.Duration) string {
-	return renderGanttPanelZoomAt(w, met, 0)
+	return renderGanttPanelZoomAt(w, met, defaultTimelineZoomLevel)
 }
 
 func renderGanttPanelZoomAt(w int, met time.Duration, zoom int) string {
@@ -236,6 +241,7 @@ func renderNowMarker(met time.Duration, barWidth int, totalDur time.Duration) st
 func renderFocusedEventStrip(met time.Duration, barWidth int, totalDur time.Duration, zoom int) []string {
 	windowStart, windowEnd := focusedWindow(met, totalDur, zoom)
 	pad := strings.Repeat(" ", ganttLabelWidth)
+	lineWidth := ganttLabelWidth + barWidth
 	nowCol := metToFocusCol(met, windowStart, windowEnd, barWidth)
 
 	labels, ticks := renderFocusedAxis(barWidth, windowStart, windowEnd, met)
@@ -243,15 +249,16 @@ func renderFocusedEventStrip(met time.Duration, barWidth int, totalDur time.Dura
 	nowMarker := renderFocusedNowMarker(barWidth, nowCol, "▼")
 	currentSummary, nextSummary := renderFocusedScheduleSummary(met)
 
-	return []string{
+	lines := []string{
 		panelTitleStyle.Render("  FOCUSED ACTIVITY"),
-		pad + dimStyle.Render(labels),
-		pad + dimStyle.Render(ticks),
-		ganttNowMarker.Render(fmt.Sprintf("  %-13s", "NOW")) + nowMarker,
-		labelStyle.Render(fmt.Sprintf("  %-13s", blockLabel)) + blocks,
+		clipStyledLine(pad+dimStyle.Render(labels), lineWidth),
+		clipStyledLine(pad+dimStyle.Render(ticks), lineWidth),
+		clipStyledLine(ganttNowMarker.Render(fmt.Sprintf("  %-13s", "NOW"))+nowMarker, lineWidth),
+		clipStyledLine(labelStyle.Render(fmt.Sprintf("  %-13s", blockLabel))+blocks, lineWidth),
 		"  " + currentSummary,
 		"  " + nextSummary,
 	}
+	return lines
 }
 
 func focusedWindow(met, totalDur time.Duration, zoom int) (time.Duration, time.Duration) {
@@ -453,6 +460,8 @@ func renderFocusedCrewBlocks(barWidth int, windowStart, windowEnd, met time.Dura
 	var b strings.Builder
 	cursor := 0
 	found := false
+	paintGapAtNow := current == nil
+
 	for _, activity := range mission.CrewActivities {
 		if activity.EndMET <= windowStart || activity.StartMET >= windowEnd {
 			continue
@@ -477,7 +486,14 @@ func renderFocusedCrewBlocks(barWidth int, windowStart, windowEnd, met time.Dura
 		}
 
 		if startCol > cursor {
-			b.WriteString(strings.Repeat(" ", startCol-cursor))
+			if paintGapAtNow && met >= windowStart && met < activity.StartMET {
+				b.WriteString(renderSyntheticCrewGapBlock(startCol - cursor))
+				cursor = startCol
+				paintGapAtNow = false
+			}
+			if startCol > cursor {
+				b.WriteString(strings.Repeat(" ", startCol-cursor))
+			}
 		}
 
 		width := endCol - startCol
@@ -486,9 +502,13 @@ func renderFocusedCrewBlocks(barWidth int, windowStart, windowEnd, met time.Dura
 	}
 
 	if cursor < barWidth {
-		b.WriteString(strings.Repeat(" ", barWidth-cursor))
+		if paintGapAtNow && met >= windowStart && met < windowEnd {
+			b.WriteString(renderSyntheticCrewGapBlock(barWidth - cursor))
+		} else {
+			b.WriteString(strings.Repeat(" ", barWidth-cursor))
+		}
 	}
-	return b.String(), found
+	return clipStyledLine(b.String(), barWidth), found
 }
 
 func renderEventBlock(label string, width int, style lipgloss.Style) string {
@@ -547,6 +567,34 @@ func renderCrewActivityBlock(activity mission.CrewActivity, width int, current *
 	}
 }
 
+func renderSyntheticCrewGapBlock(width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().
+		Inline(true).
+		Width(width).
+		MaxWidth(width).
+		Foreground(colorBright).
+		Background(colorDim)
+
+	switch {
+	case width == 1:
+		return style.Render("▏")
+	case width == 2:
+		return style.Render("▏▏")
+	default:
+		text := truncateLabel("Unstructured", width-2)
+		content := "▏" + text
+		if pad := width - 2 - lipgloss.Width(text); pad > 0 {
+			content += strings.Repeat(" ", pad)
+		}
+		content += "▏"
+		return style.Render(content)
+	}
+}
+
 func crewColorForLabel(label string) activityPaletteColor {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(label))
@@ -579,6 +627,13 @@ func truncateLabel(label string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-1]) + "…"
+}
+
+func clipStyledLine(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Cut(s, 0, width)
 }
 
 func renderFocusedScheduleSummary(met time.Duration) (string, string) {

@@ -11,6 +11,7 @@ import (
 	"artemis/internal/mission"
 	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
+	"artemis/internal/youtubecaps"
 )
 
 func TestRenderInstrumentsCompactHeightKeepsPrimaryTelemetry(t *testing.T) {
@@ -176,10 +177,17 @@ func TestRenderWideMainRowIncludesVisualizationAndMissionLog(t *testing.T) {
 			}},
 		},
 		blogPostCache: make(map[int]*nasablog.Post),
+		ytcapsStatus: &youtubecaps.Status{
+			StreamTitle: "NASA's Artemis II Live Views from Orion",
+			VideoID:     "6RwfNBtepa4",
+			Live:        true,
+			Lines:       []string{"Orion remains in good health.", "Crew systems are nominal."},
+			Timestamp:   time.Now(),
+		},
 	}
 
 	got := renderWideMainRow(m, 180, 24)
-	for _, want := range []string{"INSTRUMENTS", "MISSION LOG"} {
+	for _, want := range []string{"INSTRUMENTS", "MISSION LOG", "LIVE CAPTIONS"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected wide main row to include %q, got:\n%s", want, got)
 		}
@@ -236,6 +244,59 @@ func TestRenderSpacecraftPanelShowsDistanceDiagramWhenWide(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected spacecraft panel to include %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestRenderFocusedCrewBlocksShowsExplicitGapAtNow(t *testing.T) {
+	met := 43*time.Hour + 55*time.Minute
+	windowStart, windowEnd := focusedWindow(met, mission.TotalDuration(), 0)
+	got, ok := renderFocusedCrewBlocks(120, windowStart, windowEnd, met)
+	if !ok {
+		t.Fatalf("expected focused crew blocks to render")
+	}
+	for _, want := range []string{"▏U", "O"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected focused crew strip to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderGlossaryPanelIncludesCoreDashboardTerms(t *testing.T) {
+	m := Model{}
+	got := renderGlossaryPanel(m, 100, 60)
+	for _, want := range []string{"DASHBOARD GLOSSARY", "MET", "AOS", "RTLT", "TL Coast", "OTC / RTC", "PAO"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected glossary panel to include %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestNextUpcomingLabelAndMETPrefersEarlierCrewStartForMatchingLabel(t *testing.T) {
+	met := 2*24*time.Hour + 20*time.Hour + 10*time.Minute + 22*time.Second
+	label, at, ok := nextUpcomingLabelAndMET(met)
+	if !ok {
+		t.Fatalf("expected upcoming item")
+	}
+	if label != "OTC-2" {
+		t.Fatalf("expected OTC-2, got %q", label)
+	}
+	want := 3 * 24 * time.Hour
+	if at != want {
+		t.Fatalf("expected OTC-2 at %v, got %v", want, at)
+	}
+}
+
+func TestTimelineZoomHasAdditionalZoomOutLevelsWithoutChangingDefaultWindow(t *testing.T) {
+	if maxTimelineZoomLevel() < 5 {
+		t.Fatalf("expected additional zoom levels, got max=%d", maxTimelineZoomLevel())
+	}
+	if defaultTimelineZoomLevel != 2 {
+		t.Fatalf("expected default timeline zoom level to preserve prior default view, got %d", defaultTimelineZoomLevel)
+	}
+
+	spans := timelineZoomWindow(defaultTimelineZoomLevel)
+	if spans.past != 12*time.Hour || spans.future != 18*time.Hour {
+		t.Fatalf("expected default zoom window to remain 12h/18h, got %v/%v", spans.past, spans.future)
 	}
 }
 
@@ -378,6 +439,9 @@ func TestRenderFooterIncludesNotificationShortcut(t *testing.T) {
 		if !matched {
 			t.Fatalf("expected footer width %d to include one of %q, got %q", tc.width, tc.want, got)
 		}
+		if !strings.Contains(got, "?") {
+			t.Fatalf("expected footer width %d to include glossary shortcut, got %q", tc.width, got)
+		}
 	}
 }
 
@@ -445,6 +509,21 @@ func TestRenderFooterIncludesFullscreenShortcut(t *testing.T) {
 	m.visualizationFullscreen = true
 	if got := renderFooter(m, 120); !strings.Contains(got, "f win") && !strings.Contains(got, " |  f  | ") {
 		t.Fatalf("expected footer to include windowed shortcut in fullscreen mode, got %q", got)
+	}
+}
+
+func TestRenderFooterIncludesTranscriptShortcut(t *testing.T) {
+	m := Model{
+		width:  120,
+		height: 24,
+		layout: map[panelID]panelLayout{
+			panelTrajectory: {visible: true},
+		},
+	}
+
+	got := renderFooter(m, 120)
+	if !strings.Contains(got, "x caps") && !strings.Contains(got, " |  x  | ") {
+		t.Fatalf("expected footer to include transcript shortcut, got %q", got)
 	}
 }
 
