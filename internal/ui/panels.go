@@ -14,6 +14,7 @@ import (
 	"artemis/internal/mission"
 	"artemis/internal/nasablog"
 	"artemis/internal/spaceweather"
+	"artemis/internal/youtubecaps"
 )
 
 func (m Model) View() string {
@@ -41,6 +42,28 @@ func (m Model) View() string {
 
 	// Clock + header render fresh every frame (time-sensitive)
 	header := renderHeader(w)
+
+	if m.glossaryOpen {
+		availableH := m.height - measureHeight(header) - 1
+		if availableH < 8 {
+			availableH = 8
+		}
+		glossary := renderGlossaryPanel(m, w, availableH)
+		help := renderFooter(m, w)
+		result := lipgloss.JoinVertical(lipgloss.Left, header, glossary, help)
+		return m.placeDashboard(result, now)
+	}
+
+	if m.transcriptReaderOpen {
+		availableH := m.height - measureHeight(header) - 1
+		if availableH < 8 {
+			availableH = 8
+		}
+		reader := renderTranscriptReader(m, w, availableH)
+		help := renderFooter(m, w)
+		result := lipgloss.JoinVertical(lipgloss.Left, header, reader, help)
+		return m.placeDashboard(result, now)
+	}
 
 	if m.blogReaderOpen {
 		availableH := m.height - measureHeight(header) - 1
@@ -193,8 +216,14 @@ func shiftScreenLine(line string, width, dx int) string {
 }
 
 func renderFooter(m Model, w int) string {
+	if m.glossaryOpen {
+		return renderGlossaryFooter(m, w)
+	}
 	if m.blogReaderOpen {
 		return renderBlogReaderFooter(m, w)
+	}
+	if m.transcriptReaderOpen {
+		return renderTranscriptReaderFooter(w)
 	}
 
 	theme := ThemeName()
@@ -209,6 +238,9 @@ func renderFooter(m Model, w int) string {
 	fullscreenWide := "f fullscreen"
 	fullscreenCompact := "f full"
 	fullscreenTight := "f"
+	transcriptWide := "x transcript"
+	transcriptCompact := "x caps"
+	transcriptTight := "x"
 	if m.visualizationFullscreen {
 		fullscreenWide = "f windowed"
 		fullscreenCompact = "f win"
@@ -228,6 +260,9 @@ func renderFooter(m Model, w int) string {
 	notifyWide := fmt.Sprintf("n notify(%s)", notifyState)
 	notifyCompact := fmt.Sprintf("n ntfy(%s)", notifyState)
 	notifyTight := fmt.Sprintf("n(%s)", notifyState)
+	testNotifyWide := "T test-notify"
+	testNotifyCompact := "T test"
+	testNotifyTight := "T"
 	debugWide := ""
 	debugCompact := ""
 	debugTight := ""
@@ -251,14 +286,17 @@ func renderFooter(m Model, w int) string {
 			"+/- zoom",
 			viewWide,
 			fullscreenWide,
+			transcriptWide,
 			unitWide,
 			protectWide,
 			notifyWide,
+			testNotifyWide,
 			debugWide,
 			fmt.Sprintf("c theme(%s)", theme),
 			effectsWide,
 			"r refresh",
 			"j/k/enter log",
+			"? glossary",
 			notificationError,
 			hiddenWide,
 			uptimeWide,
@@ -269,27 +307,31 @@ func renderFooter(m Model, w int) string {
 			"t tl",
 			viewCompact,
 			fullscreenCompact,
+			transcriptCompact,
 			unitCompact,
 			protectCompact,
 			notifyCompact,
+			testNotifyCompact,
 			debugCompact,
 			fmt.Sprintf("c %s", theme),
 			effectsCompact,
 			"r",
 			"log nav",
+			"? glossary",
 			notificationError,
 			hiddenCompact,
 			uptimeCompact,
 			fmt.Sprintf("%dx%d", m.width, m.height),
 		),
 		joinFooterParts(
-			joinFooterParts("q", "t", viewTight, fullscreenTight, unitTight, protectTight, notifyTight, debugTight, "c", effectsTight, "r", "log"),
+			joinFooterParts("q", "t", viewTight, fullscreenTight, transcriptTight, unitTight, protectTight, notifyTight, testNotifyTight, debugTight, "c", effectsTight, "r", "log", "?"),
 			notificationError,
 			hiddenCompact,
 			uptimeCompact,
 			fmt.Sprintf("%s %dx%d", theme, m.width, m.height),
 		),
-		joinFooterParts(hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
+		joinFooterParts("q", "t", notifyTight, "?", "r", notificationError, fmt.Sprintf("%dx%d", m.width, m.height)),
+		joinFooterParts(notificationError, hiddenCompact, fmt.Sprintf("%dx%d", m.width, m.height)),
 		fmt.Sprintf("%dx%d", m.width, m.height),
 	}
 
@@ -304,9 +346,41 @@ func renderFooter(m Model, w int) string {
 
 func renderBlogReaderFooter(m Model, w int) string {
 	candidates := []string{
-		joinFooterParts("esc close", "j/k scroll", "pgup/pgdn page", "g/G top/end", "o browser", "r reload", "q quit"),
-		joinFooterParts("esc", "j/k", "pgup/pgdn", "g/G", "o", "r", "q"),
-		joinFooterParts("esc", "scroll", "o", "q"),
+		joinFooterParts("esc close", "j/k scroll", "pgup/pgdn page", "g/G top/end", "o browser", "r reload", "? glossary", "q quit"),
+		joinFooterParts("esc", "j/k", "pgup/pgdn", "g/G", "o", "r", "?", "q"),
+		joinFooterParts("esc", "scroll", "o", "?", "q"),
+	}
+
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= w {
+			return helpStyle.Width(w).Align(lipgloss.Center).Render(candidate)
+		}
+	}
+
+	return helpStyle.Width(w).Align(lipgloss.Center).Render(candidates[len(candidates)-1])
+}
+
+func renderTranscriptReaderFooter(w int) string {
+	candidates := []string{
+		joinFooterParts("esc/x close", "j/k scroll", "pgup/pgdn page", "g/G top/end", "r refresh", "q quit"),
+		joinFooterParts("esc/x", "j/k", "pgup/pgdn", "g/G", "r", "q"),
+		joinFooterParts("esc/x", "scroll", "r", "q"),
+	}
+
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= w {
+			return helpStyle.Width(w).Align(lipgloss.Center).Render(candidate)
+		}
+	}
+
+	return helpStyle.Width(w).Align(lipgloss.Center).Render(candidates[len(candidates)-1])
+}
+
+func renderGlossaryFooter(m Model, w int) string {
+	candidates := []string{
+		joinFooterParts("esc/? close", "j/k scroll", "pgup/pgdn page", "g/G top/end", "q quit"),
+		joinFooterParts("esc/?", "j/k", "pgup/pgdn", "g/G", "q"),
+		joinFooterParts("esc/?", "scroll", "q"),
 	}
 
 	for _, candidate := range candidates {
@@ -453,14 +527,26 @@ func renderTopRow(m Model, w int) string {
 }
 
 func renderTopQuadRow(m Model, w int) string {
-	colW := w / 4
-	widths := []int{colW, colW, colW, w - (3 * colW)}
+	widths := weightedSplitWidths(w, []int{24, 28, 24, 24})
 
-	panels := []string{
+	basePanels := []string{
 		renderClockPanelCompact(widths[0], mission.MET()),
 		renderSpaceWeatherPanel(m, widths[1]),
 		renderDSNPanel(m, widths[2]),
 		renderSpacecraftPanelCompact(m, widths[3]),
+	}
+	targetHeight := 0
+	for _, panel := range basePanels {
+		if h := measureHeight(panel); h > targetHeight {
+			targetHeight = h
+		}
+	}
+
+	panels := []string{
+		renderClockPanelCompactHeight(widths[0], mission.MET(), targetHeight),
+		renderSpaceWeatherPanelHeight(m, widths[1], targetHeight),
+		renderDSNPanelHeight(m, widths[2], targetHeight),
+		renderSpacecraftPanelCompactHeight(m, widths[3], targetHeight),
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, panels...)
@@ -475,7 +561,7 @@ func renderWideOpsRow(m Model, w int) string {
 
 func renderWideInfoRow(m Model, w int) string {
 	leftW, rightW := splitWidthEvenly(w)
-	left := renderMissionLogPanel(m, leftW, 5, m.selectedLogEntry)
+	left := renderMissionLogPanel(m, leftW, 8, m.selectedLogEntry)
 	right := renderCrewPanel(rightW)
 	return joinEqualHeightPanels(left, right)
 }
@@ -485,7 +571,15 @@ func renderWideMainRow(m Model, w, availableHeight int) string {
 	rightW := w - leftW
 
 	left := m.renderCachedTrajectoryPanelWidth(leftW, availableHeight)
-	right := renderMissionLogPanel(m, rightW, 8, m.selectedLogEntry)
+	totalRightHeight := measureHeight(left)
+	if totalRightHeight <= 0 {
+		totalRightHeight = availableHeight
+	}
+	topH := totalRightHeight / 2
+	bottomH := totalRightHeight - topH
+	rightTop := renderLiveCaptionsPanelHeight(m, rightW, topH)
+	rightBottom := renderMissionLogPanelHeight(m, rightW, 12, m.selectedLogEntry, bottomH)
+	right := lipgloss.JoinVertical(lipgloss.Left, rightTop, rightBottom)
 	return joinEqualHeightPanels(left, right)
 }
 
@@ -498,6 +592,10 @@ func renderClockPanel(w, totalHeight int) string {
 }
 
 func renderClockPanelCompact(w int, met time.Duration) string {
+	return renderClockPanelCompactHeight(w, met, 0)
+}
+
+func renderClockPanelCompactHeight(w int, met time.Duration, totalHeight int) string {
 	day := mission.MissionDayAt(met)
 	totalDays := mission.TotalMissionDays()
 	nowUTC := mission.LaunchTime.Add(met).UTC()
@@ -508,11 +606,11 @@ func renderClockPanelCompact(w int, met time.Duration) string {
 		localLabel = localNow.Format("MST")
 	}
 
-	next := mission.NextEvent(met)
+	nextLabel, nextAt, ok := nextUpcomingLabelAndMET(met)
 	nextLine := activeStyle.Render("Mission Complete")
-	if next != nil {
-		nextLine = labelStyle.Render("Next ") + valueStyle.Render(next.Label) +
-			dimStyle.Render("  in ") + metStyle.Render(mission.FormatCountdown(next.METOffset-met))
+	if ok {
+		nextLine = labelStyle.Render("Next ") + valueStyle.Render(nextLabel) +
+			dimStyle.Render("  in ") + metStyle.Render(mission.FormatCountdown(nextAt-met))
 	}
 
 	content := strings.Join([]string{
@@ -523,9 +621,16 @@ func renderClockPanelCompact(w int, met time.Duration) string {
 		nextLine,
 	}, "\n")
 
-	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
-		panelTitleStyle.Render("MISSION CLOCK") + "\n" + content,
-	)
+	style := panelStyle.Width(renderWidthFor(panelStyle, w))
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(panelTitleStyle.Render("MISSION CLOCK") + "\n" + content)
 }
 
 func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
@@ -541,12 +646,12 @@ func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
 	}
 
 	var nextLine string
-	next := mission.NextEvent(met)
-	if next != nil {
-		countdown := next.METOffset - met
+	nextLabel, nextAt, ok := nextUpcomingLabelAndMET(met)
+	if ok {
+		countdown := nextAt - met
 		nextLine = fmt.Sprintf("%s  %s\n%s  %s",
 			labelStyle.Render("Next:"),
-			valueStyle.Render(next.Label),
+			valueStyle.Render(nextLabel),
 			labelStyle.Render("In:"),
 			metStyle.Render(mission.FormatCountdown(countdown)),
 		)
@@ -576,6 +681,29 @@ func renderClockPanelAt(w, totalHeight int, met time.Duration) string {
 	}
 
 	return style.Render(panelTitleStyle.Render("MISSION CLOCK") + "\n" + content)
+}
+
+func nextUpcomingLabelAndMET(met time.Duration) (string, time.Duration, bool) {
+	nextEvent := mission.NextEvent(met)
+	nextCrew := mission.NextCrewActivity(met)
+
+	switch {
+	case nextEvent == nil && nextCrew == nil:
+		return "", 0, false
+	case nextEvent == nil:
+		return nextCrew.Label, nextCrew.StartMET, true
+	case nextCrew == nil:
+		return nextEvent.Label, nextEvent.METOffset, true
+	case nextCrew.Label == nextEvent.Label:
+		if nextCrew.StartMET <= nextEvent.METOffset {
+			return nextCrew.Label, nextCrew.StartMET, true
+		}
+		return nextEvent.Label, nextEvent.METOffset, true
+	case nextCrew.StartMET <= nextEvent.METOffset:
+		return nextCrew.Label, nextCrew.StartMET, true
+	default:
+		return nextEvent.Label, nextEvent.METOffset, true
+	}
 }
 
 func renderSpacecraftPanel(m Model, w, totalHeight int) string {
@@ -636,13 +764,33 @@ func renderSpacecraftPanel(m Model, w, totalHeight int) string {
 }
 
 func renderSpacecraftPanelCompact(m Model, w int) string {
+	return renderSpacecraftPanelCompactHeight(m, w, 0)
+}
+
+func renderSpacecraftPanelCompactHeight(m Model, w, totalHeight int) string {
 	if m.hzErr != nil && m.hzState == nil {
-		return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+		style := panelStyle.Width(renderWidthFor(panelStyle, w))
+		if totalHeight > 0 {
+			contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+			if contentHeight < 0 {
+				contentHeight = 0
+			}
+			style = style.Height(contentHeight)
+		}
+		return style.Render(
 			panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + errorStyle.Render("Waiting for Horizons data..."),
 		)
 	}
 	if m.hzState == nil {
-		return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+		style := panelStyle.Width(renderWidthFor(panelStyle, w))
+		if totalHeight > 0 {
+			contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+			if contentHeight < 0 {
+				contentHeight = 0
+			}
+			style = style.Height(contentHeight)
+		}
+		return style.Render(
 			panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + dimStyle.Render("Fetching spacecraft data..."),
 		)
 	}
@@ -665,7 +813,16 @@ func renderSpacecraftPanelCompact(m Model, w int) string {
 		renderDistanceDiagram(*s, earthDist, moonDist, m.units, innerWidthFor(panelStyle, w)),
 	}
 
-	return panelStyle.Width(renderWidthFor(panelStyle, w)).Render(
+	style := panelStyle.Width(renderWidthFor(panelStyle, w))
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(
 		panelTitleStyle.Render("SPACECRAFT STATE") + "\n" + strings.Join(lines, "\n"),
 	)
 }
@@ -755,6 +912,10 @@ func renderDistanceDiagram(state horizons.State, earthDist, moonDist float64, un
 }
 
 func renderDSNPanel(m Model, w int) string {
+	return renderDSNPanelHeight(m, w, 0)
+}
+
+func renderDSNPanelHeight(m Model, w, totalHeight int) string {
 	var content string
 
 	if m.dsnErr != nil && m.dsnStatus == nil {
@@ -822,7 +983,16 @@ func renderDSNPanel(m Model, w int) string {
 		content = dimStyle.Render("Fetching DSN status...")
 	}
 
-	return panelStyle.Width(w - 2).Render(
+	style := panelStyle.Width(w - 2)
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(
 		panelTitleStyle.Render("DEEP SPACE NETWORK") +
 			"  " + dimStyle.Render("▲ uplink  ▼ downlink") + "\n" + content,
 	)
@@ -1139,6 +1309,10 @@ func formatDishActivity(dish dsn.Dish) string {
 }
 
 func renderSpaceWeatherPanel(m Model, w int) string {
+	return renderSpaceWeatherPanelHeight(m, w, 0)
+}
+
+func renderSpaceWeatherPanelHeight(m Model, w, totalHeight int) string {
 	if m.swStatus == nil {
 		var content string
 		if m.swErr != nil {
@@ -1146,7 +1320,15 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 		} else {
 			content = dimStyle.Render("Fetching space weather...")
 		}
-		return panelStyle.Width(w - 2).Render(
+		style := panelStyle.Width(w - 2)
+		if totalHeight > 0 {
+			contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+			if contentHeight < 0 {
+				contentHeight = 0
+			}
+			style = style.Height(contentHeight)
+		}
+		return style.Render(
 			panelTitleStyle.Render("SPACE WEATHER") + "\n" + content,
 		)
 	}
@@ -1200,7 +1382,16 @@ func renderSpaceWeatherPanel(m Model, w int) string {
 	summary := swSummary(s)
 
 	content := scales + "\n" + details + "\n  " + summary
-	return panelStyle.Width(w - 2).Render(
+	style := panelStyle.Width(w - 2)
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	return style.Render(
 		panelTitleStyle.Render("SPACE WEATHER") +
 			"  " + dimStyle.Render("NOAA/SWPC") + "\n" + content,
 	)
@@ -1261,6 +1452,10 @@ func formatProtonFlux(flux float64) string {
 }
 
 func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) string {
+	return renderMissionLogPanelHeight(m, w, maxEntries, selectedIdx, 0)
+}
+
+func renderMissionLogPanelHeight(m Model, w int, maxEntries int, selectedIdx int, totalHeight int) string {
 	if m.blogStatus == nil {
 		var content string
 		if m.blogErr != nil {
@@ -1268,7 +1463,15 @@ func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) stri
 		} else {
 			content = dimStyle.Render("Fetching mission log...")
 		}
-		return panelStyle.Width(w - 2).Render(
+		style := panelStyle.Width(w - 2)
+		if totalHeight > 0 {
+			contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+			if contentHeight < 0 {
+				contentHeight = 0
+			}
+			style = style.Height(contentHeight)
+		}
+		return style.Render(
 			panelTitleStyle.Render("MISSION LOG") + "\n" + content,
 		)
 	}
@@ -1307,7 +1510,15 @@ func renderMissionLogPanel(m Model, w int, maxEntries int, selectedIdx int) stri
 	}
 
 	content := strings.Join(lines, "\n")
-	return panelStyle.Width(w - 2).Render(
+	style := panelStyle.Width(w - 2)
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+	return style.Render(
 		panelTitleStyle.Render("MISSION LOG") +
 			"  " + dimStyle.Render("j/k: select  enter: read  o: browser") + "\n" + content,
 	)
@@ -1353,6 +1564,296 @@ func renderMissionLogReader(m Model, w, totalHeight int) string {
 	return panelStyle.Width(w - 2).Height(maxInt(0, totalHeight-2)).Render(
 		title + "  " + status + "\n" + strings.Join(visible, "\n"),
 	)
+}
+
+func renderLiveCaptionsPanelHeight(m Model, w, totalHeight int) string {
+	style := panelStyle.Width(w - 2)
+	if totalHeight > 0 {
+		contentHeight := totalHeight - panelStyle.GetVerticalBorderSize()
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+		style = style.Height(contentHeight)
+	}
+
+	if m.ytcapsStatus == nil {
+		content := dimStyle.Render("Resolving NASA YouTube live captions...")
+		if m.ytcapsErr != nil {
+			content = errorStyle.Render(m.ytcapsErr.Error())
+		}
+		return style.Render(panelTitleStyle.Render("LIVE CAPTIONS") + "  " + dimStyle.Render("x: fullscreen") + "\n" + content)
+	}
+
+	statusText := dimStyle.Render("best effort")
+	if m.ytcapsStatus.Live {
+		statusText = activeStyle.Render("LIVE")
+	} else {
+		statusText = dimStyle.Render("recent stream")
+	}
+
+	bodyWidth := innerWidthFor(panelStyle, w)
+	lines := buildLiveCaptionsLines(m.ytcapsStatus, m.ytcapsErr, bodyWidth)
+	bodyH := totalHeight - panelStyle.GetVerticalBorderSize() - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	if len(lines) > bodyH {
+		lines = lines[len(lines)-bodyH:]
+	}
+	for len(lines) < bodyH {
+		lines = append(lines, "")
+	}
+
+	title := panelTitleStyle.Render("LIVE CAPTIONS") + "  " + statusText + "  " + dimStyle.Render("x: fullscreen")
+	return style.Render(title + "\n" + strings.Join(lines, "\n"))
+}
+
+func buildLiveCaptionsLines(status *youtubecaps.Status, fetchErr error, width int) []string {
+	if width < 24 {
+		width = 24
+	}
+	if status == nil {
+		if fetchErr != nil {
+			return []string{errorStyle.Render(fetchErr.Error())}
+		}
+		return []string{dimStyle.Render("No caption source resolved yet.")}
+	}
+
+	var lines []string
+	title := status.StreamTitle
+	if title == "" {
+		title = "NASA live stream"
+	}
+	lines = append(lines, wrapText(title, width)...)
+
+	meta := dimStyle.Render(fmt.Sprintf("%s  %s", status.VideoID, status.Timestamp.Local().Format("15:04:05")))
+	if status.VideoID == "" {
+		meta = dimStyle.Render("captured " + status.Timestamp.Local().Format("2006-01-02 15:04:05 MST"))
+	} else {
+		meta = dimStyle.Render(fmt.Sprintf("%s  captured %s", status.VideoID, status.Timestamp.Local().Format("2006-01-02 15:04:05 MST")))
+	}
+	lines = append(lines, meta, "")
+
+	if len(status.Lines) == 0 {
+		lines = append(lines, dimStyle.Render("No caption text available from the current stream yet."))
+		return lines
+	}
+
+	for _, line := range status.Lines {
+		lines = append(lines, wrapText(line, width)...)
+	}
+	return lines
+}
+
+func renderTranscriptReader(m Model, w, totalHeight int) string {
+	contentLines := buildTranscriptReaderLines(m, innerWidthFor(panelStyle, w))
+	bodyH := totalHeight - panelStyle.GetVerticalBorderSize() - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	maxScroll := 0
+	if len(contentLines) > bodyH {
+		maxScroll = len(contentLines) - bodyH
+	}
+	scroll := m.transcriptReaderScroll
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + bodyH
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+	visible := contentLines[scroll:end]
+	for len(visible) < bodyH {
+		visible = append(visible, "")
+	}
+
+	status := dimStyle.Render(transcriptReaderStatus(m, scroll, maxScroll))
+	return panelStyle.Width(w - 2).Height(maxInt(0, totalHeight-2)).Render(
+		panelTitleStyle.Render("VIDEO TRANSCRIPT") + "  " + status + "\n" + strings.Join(visible, "\n"),
+	)
+}
+
+func buildTranscriptReaderLines(m Model, width int) []string {
+	if width < 24 {
+		width = 24
+	}
+
+	pathText := "file unavailable"
+	if m.transcriptPath != "" {
+		pathText = "file " + m.transcriptPath
+	}
+	pathLines := wrapText(pathText, width)
+	lines := make([]string, 0, len(pathLines)+2+len(m.transcriptArchive))
+	for _, line := range pathLines {
+		lines = append(lines, dimStyle.Render(line))
+	}
+	lines = append(lines, "")
+	if len(m.transcriptArchive) == 0 {
+		lines = append(lines, buildLiveCaptionsLines(m.ytcapsStatus, m.ytcapsErr, width)...)
+		return lines
+	}
+
+	for _, line := range m.transcriptArchive {
+		if strings.TrimSpace(line) == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapText(line, width)...)
+	}
+	return lines
+}
+
+func transcriptReaderStatus(m Model, scroll, maxScroll int) string {
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	return fmt.Sprintf("%d/%d", scroll, maxScroll)
+}
+
+func renderGlossaryPanel(m Model, w, totalHeight int) string {
+	contentLines := buildGlossaryLines(innerWidthFor(panelStyle, w))
+	bodyH := totalHeight - panelStyle.GetVerticalBorderSize() - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	maxScroll := 0
+	if len(contentLines) > bodyH {
+		maxScroll = len(contentLines) - bodyH
+	}
+	scroll := m.glossaryScroll
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + bodyH
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+	visible := contentLines[scroll:end]
+	for len(visible) < bodyH {
+		visible = append(visible, "")
+	}
+
+	title := panelTitleStyle.Render("DASHBOARD GLOSSARY")
+	status := dimStyle.Render(blogReaderProgress(scroll, maxScroll))
+	return panelStyle.Width(w - 2).Height(maxInt(0, totalHeight-2)).Render(
+		title + "  " + status + "\n" + strings.Join(visible, "\n"),
+	)
+}
+
+func buildGlossaryLines(width int) []string {
+	if width < 28 {
+		width = 28
+	}
+
+	type glossaryItem struct {
+		term string
+		desc string
+	}
+
+	sections := []struct {
+		title string
+		items []glossaryItem
+	}{
+		{
+			title: "Time And Mission Context",
+			items: []glossaryItem{
+				{"MET", "Mission Elapsed Time since launch. Format: day:hour:minute:second."},
+				{"UTC / CEST", "Current wall-clock time in Coordinated Universal Time and Prague local time."},
+				{"Day 3/10", "Current mission day out of the dashboard's modeled 10 mission days."},
+				{"Next", "Earliest upcoming major event or crew activity, whichever happens first."},
+				{"In", "Countdown to that next item."},
+			},
+		},
+		{
+			title: "Spacecraft And Comms",
+			items: []glossaryItem{
+				{"Earth Dist / Moon Dist", "Orion's current distance from Earth and from the Moon."},
+				{"Speed", "Current Orion inertial speed from JPL Horizons vectors."},
+				{"Earth Rate", "How fast Orion is moving away from or toward Earth."},
+				{"Ecl Lon/Lat", "Ecliptic longitude and latitude of Orion in the Earth-centered frame."},
+				{"RTLT", "Round-trip light time for a radio signal between Earth and Orion."},
+				{"AOS", "Acquisition of signal: Earth contact is nominal."},
+				{"LOS", "Loss of signal: the Moon is blocking the Earth line of sight."},
+				{"HZ", "Freshness of JPL Horizons spacecraft-state data."},
+				{"DSN", "Freshness of Deep Space Network tracking data."},
+				{"Distance Track", "Simple Earth-Orion-Moon line showing where Orion sits between Earth and the Moon."},
+			},
+		},
+		{
+			title: "Space Weather",
+			items: []glossaryItem{
+				{"R / S / G", "NOAA scales for Radio blackout, Solar radiation, and Geomagnetic storm severity."},
+				{"Kp", "Global geomagnetic activity index. Higher means stronger geomagnetic disturbance."},
+				{"Bz", "North-south interplanetary magnetic field component. Strong southward Bz can couple more strongly to Earth."},
+				{"Bt", "Total magnetic-field magnitude in the solar wind."},
+				{"Protons / pfu", "Solar proton flux in particle flux units; elevated values can matter for radiation risk."},
+				{"Flare", "Current NOAA X-ray flare class such as C, M, or X."},
+			},
+		},
+		{
+			title: "Mission Timeline",
+			items: []glossaryItem{
+				{"Earth Orbit", "Early mission period while Orion remains in Earth orbit."},
+				{"TL Coast", "Trans-lunar coast: outbound cruise from Earth toward the Moon."},
+				{"Lunar Flyby", "Close pass through the Moon encounter portion of the mission."},
+				{"TE Coast", "Trans-Earth coast: return cruise from the Moon back toward Earth."},
+				{"Entry", "Final entry and splashdown sequence back at Earth."},
+				{"NOW", "Current MET position inside the focused activity strip."},
+				{"Focused Activity", "Zoomed crew-activity window showing what just happened, what is happening now, and what comes next."},
+			},
+		},
+		{
+			title: "Timeline Activity Labels",
+			items: []glossaryItem{
+				{"TLI", "Trans-lunar injection burn or the crew operations around it."},
+				{"OTC / RTC", "Outbound or return trajectory correction maneuver."},
+				{"PAO", "Public Affairs Office media or outreach event."},
+				{"PWD", "Private crew conference or private medical / mission discussion block."},
+				{"COGN", "Cognitive assessment task block."},
+				{"Pulse Ox", "Pulse oximetry measurement."},
+				{"NatGeo / NG", "National Geographic media segment."},
+				{"Lunar Img", "Lunar imagery review or acquisition activity."},
+				{"Unstructured", "A real gap between named schedule blocks. The crew is active, but this dashboard does not have a more specific label for that interval."},
+			},
+		},
+		{
+			title: "Mission Log And Controls",
+			items: []glossaryItem{
+				{"Mission Log", "NASA Artemis II blog updates fetched from the mission feed."},
+				{"j / k", "Move through log entries, or scroll readers and glossary views."},
+				{"Enter", "Open the selected mission-log entry inside the app."},
+				{"o", "Open the selected mission-log entry in the browser."},
+				{"t", "Toggle event list versus timeline strip view."},
+				{"+ / -", "Zoom focused activity in or out."},
+				{"v", "Cycle the main visualization view."},
+				{"f", "Toggle visualization fullscreen/windowed mode."},
+				{"n / T", "Toggle notifications, or send a notification test."},
+				{"c / s / r / u / p", "Cycle theme, cycle effects, refresh data, switch units, or change screen-protection mode."},
+			},
+		},
+	}
+
+	var lines []string
+	lines = append(lines, valueStyle.Render("Reference for terms and acronyms used in the Artemis II dashboard."))
+	lines = append(lines, dimStyle.Render("This explains what the panels mean; it does not change the mission data itself."))
+	lines = append(lines, "")
+
+	for _, section := range sections {
+		lines = append(lines, panelTitleStyle.Render(section.title))
+		for _, item := range section.items {
+			lines = append(lines, wrapText(item.term+" — "+item.desc, width)...)
+		}
+		lines = append(lines, "")
+	}
+
+	return lines
 }
 
 func buildMissionLogReaderLines(entry nasablog.Entry, post *nasablog.Post, loading bool, fetchErr error, width int) []string {
